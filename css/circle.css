@@ -1,0 +1,120 @@
+.farm-smart {
+  display: flex;
+  justify-content: center;
+  background-image: url("/media/img/ag-02.svg");
+  background-size: cover;
+  background-position: center bottom;
+  padding: 3vw;
+}
+.smart-farm.circle {
+  padding: 1vw;
+  width: 100%;
+  max-width: 1140px;
+  height: auto;
+  background-color: #FFF;
+  border-radius: 50%;
+  position: relative;
+}
+.smart-farm.circle div {
+  padding: 0;
+  margin: 0;
+}
+.smart-farm.circle .images > img {
+  height: 100%;
+}
+.smart-farm .images > img:nth-child(1) {
+  width: 100%;
+  position: relative;
+  z-index: 2;
+  transform: rotate(90deg);
+  transition: transform 1s ease-in-out;
+}
+.smart-farm .images > img:nth-child(2) {
+  position: absolute;
+  width: 35%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.smart-farm.circle .con, .smart-farm.circle .images {
+  width: 100%;
+  height: 100%;
+}
+.smart-farm.circle .con {
+  z-index: 3;
+  top: 0;
+  left: 0;
+  position: absolute;
+}
+.smart-farm.circle .con > div {
+  color: #009eae;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24%;
+  height: 23%;
+  text-align: center;
+}
+.smart-farm.circle .con > div .cent {
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+}
+.smart-farm.circle .con span {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 1s ease-in-out;
+}
+.smart-farm.circle .con strong {
+  margin-bottom: 3px;
+}
+.smart-farm.circle .con strong, .smart-farm.circle .con p {
+  font-size: 1rem !important;
+  line-height: 1.1 !important;
+}
+.smart-farm.circle .con img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc( 50px + 9vw);
+  height: auto;
+  opacity: 1;
+  transition: opacity 1s ease-in-out;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+}
+.smart-farm.circle .con img:hover {
+  transform: translate(-50%, -50%) scale(1.4);
+}
+.smart-farm.circle .con > div:nth-child(6) img {
+  opacity: 0;
+  z-index: auto;
+}
+.smart-farm.circle .con > div:nth-child(6) span {
+  opacity: 1;
+  z-index: 4;
+}
+.smart-farm.circle .con > div:nth-child(1) {
+  transform: translate(140%);
+}
+.smart-farm.circle .con > div:nth-child(2) {
+  transform: rotate(55deg) translate(140%) rotate(-55deg);
+}
+.smart-farm.circle .con > div:nth-child(3) {
+  transform: rotate(125deg) translate(140%) rotate(-125deg);
+}
+.smart-farm.circle .con > div:nth-child(4) {
+  transform: translate(-140%);
+}
+.smart-farm.circle .con > div:nth-child(5) {
+  transform: rotate(235deg) translate(140%) rotate(-235deg); 
+}
+.smart-farm.circle .con > div:nth-child(6) {
+  transform: rotate(305deg) translate(140%) rotate(-305deg);
+}
