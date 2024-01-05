@@ -1,6 +1,6 @@
 import '../css/form.css';
 import { msgError, msgSuccess } from './util.js';
-import { Loader } from './classes.js';
+import { Loader } from './class.js';
 class Form {
   // TO-DO add functionality so the form will only submit the action
   // TO-DO Generate steps, previous, next, status, and controller elements dynamically
