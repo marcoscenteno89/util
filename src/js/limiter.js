@@ -1,6 +1,6 @@
 import { msgError, msgSuccess } from './util.js';
 // TO-DO Break this class into limiter class and storage class
-export default class Limiter {
+class Limiter {
   constructor(elem, status) {
     this.target = elem;
     this.disabled = false;
@@ -114,3 +114,5 @@ export default class Limiter {
     }
   }
 }
+
+export { Limiter }

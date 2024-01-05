@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/js/util.js",
     "./canvas": "./src/js/canvas.js",
-    "./classes": "./src/js/classes.js",
+    "./class": "./src/js/class.js",
+    "./limiter": "./src/js/limiter.js",
     "./form": "./src/js/form.js"
   },
   "scripts": {

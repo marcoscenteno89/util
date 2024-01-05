@@ -1,7 +1,7 @@
 import '../css/form.css';
 import { msgError, msgSuccess } from './util.js';
 import { Loader } from './classes.js';
-export default class Form {
+class Form {
   // TO-DO add functionality so the form will only submit the action
   // TO-DO Generate steps, previous, next, status, and controller elements dynamically
   constructor(form, formCompletedCallback=false, tabChangeCallback=false) {
@@ -179,3 +179,5 @@ export default class Form {
     this.loader.off();
   }
 }
+
+export { Form }
