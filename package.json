@@ -1,0 +1,25 @@
+{
+  "name": "@marccent/util",
+  "version": "1.0.0",
+  "description": "This project contains a list of utility classes",
+  "type": "module",
+  "exports": {
+    ".": "./src/js/util.js",
+    "./canvas": "./src/js/canvas.js",
+    "./classes": "./src/js/classes.js",
+    "./form": "./src/js/form.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcoscenteno89/util.git"
+  },
+  "author": "Marcos Centeno",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/marcoscenteno89/util/issues"
+  },
+  "homepage": "https://github.com/marcoscenteno89/util#readme"
+}

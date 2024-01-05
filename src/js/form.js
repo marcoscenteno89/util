@@ -1,5 +1,6 @@
-import { msgError, msgSuccess } from './utilities.js';
-import Loader from './loader.js';
+import '../css/form.css';
+import { msgError, msgSuccess } from './util.js';
+import { Loader } from './classes.js';
 export default class Form {
   // TO-DO add functionality so the form will only submit the action
   // TO-DO Generate steps, previous, next, status, and controller elements dynamically
@@ -18,6 +19,7 @@ export default class Form {
     this.previous = form.querySelector('button[name="prev"]');
     this.loader = new Loader(this.next, 3);
     this.stepContainer = form.querySelector('.steps');
+    console.log(this)
 
     this.init();
   }

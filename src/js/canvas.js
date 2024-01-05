@@ -7,6 +7,7 @@
  * the viewport. This can be any valid DOM element, such as a `<div>`, `<section>`, or `<img>`. The
  * observer will monitor this element and trigger the callback function when it becomes visible or
  */
+
 const canvasObserver = (obj, node) => {
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
