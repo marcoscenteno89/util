@@ -1,4 +1,3 @@
-import '../css/form.css';
 import { msgError, msgSuccess } from './util.js';
 import { Loader } from './class.js';
 class Form {

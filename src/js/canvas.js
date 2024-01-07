@@ -1,5 +1,3 @@
-import '../css/canvas.css';
-
 /**
  * The `canvasObserver` function uses the Intersection Observer API to trigger a callback function when
  * a specified element enters or exits the viewport.
