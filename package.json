@@ -8,7 +8,9 @@
     "./canvas": "./src/js/canvas.js",
     "./class": "./src/js/class.js",
     "./limiter": "./src/js/limiter.js",
-    "./form": "./src/js/form.js"
+    "./form": "./src/js/form.js",
+    "./css/form": "./src/css/form.css",
+    "./css/canvas": "./src/css/canvas.css"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
