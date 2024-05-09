@@ -145,6 +145,7 @@ class CanvasManager {
     this.p5 = p5;
     this.p = p;
     this.center = p.createVector(p.width / 2, p.height / 2);
+    this.avg = parseInt((p.width + p.height) / 2);
     this.ctx = this.canvas.drawingContext;
     this.background;
     this.flowfield = {};
@@ -518,7 +519,10 @@ class Shape {
    * implicitly return undefined.
    */
   setColor(color) {
-    if (!color) return false;
+    if (!color) {
+      this.p.noStroke();
+      return false;
+    }
     if (color.stroke) {
       this.p.strokeWeight(color.weight);
       this.p.stroke(color.stroke);

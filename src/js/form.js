@@ -18,7 +18,6 @@ class Form {
     this.previous = form.querySelector('button[name="prev"]');
     this.loader = new Loader(this.next, 3);
     this.stepContainer = form.querySelector('.steps');
-    console.log(this)
 
     this.init();
   }

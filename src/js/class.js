@@ -1,15 +1,42 @@
-class Color {
+import { post } from "./util";
 
+class Color {
   constructor(hex) {
     this.hex;
     this.rgb;
-    this.variations = [];
-
+    this.lighter = [],
+    this.darker = []
     this.init(hex);
   }
 
   init(hex) {
-    this.isHex(hex);
+    if (this.isHex(hex)) {
+      this.rgb = this.getRgb(hex);
+      this.hex = this.getHex(this.rgb.r, this.rgb.g, this.rgb.b);
+      
+      // RUN 3 TIMES TO GET 3 LIGHTER VARIATIONS
+      let lightCount = 20;
+      for (let i = 0; i < 5; i++) {
+        let item = {};
+        item.rgb = this.getVariant(this.rgb, lightCount);
+        item.hex = this.getHex(item.rgb.r, item.rgb.g, item.rgb.b);
+        this.lighter.push(item);
+        lightCount += 20;
+      }
+
+      // RUN 3 TIMES TO GET 3 DARKER VARIATIONS
+      let darkCount = -20;
+      for (let i = 0; i < 5; i++) {
+        let item = {};
+        item.rgb = this.getVariant(this.rgb, darkCount);
+        item.hex = this.getHex(item.rgb.r, item.rgb.g, item.rgb.b);
+        this.darker.push(item);
+        darkCount -= 20;
+      }
+
+    } else {
+      console.log('invalid hex');
+    }
 
   }
 
@@ -18,7 +45,7 @@ class Color {
     return regExp.test(color);
   }
 
-  getRgb = (hex) => {
+  getRgb(hex) {
     let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return {
       r: parseInt(result[1], 16),
@@ -27,7 +54,7 @@ class Color {
     }
   }
   
-  getHex = (r, g, b) => {
+  getHex(r, g, b) {
     const componentToHex = (current) => {
         const hex = current.toString(16);
         return hex.length == 1 ? "0" + hex : hex;
@@ -56,7 +83,6 @@ class Color {
     let newRgb = {}
     let hsp = this.getHSP(rgb);
     let differece = parseInt(Math.abs(hsp - 127.5) / 2);
-    console.log(this.is_dark)
     for (let key in rgb) {
       newRgb[key] = this.is_dark ? rgb[key] - differece : rgb[key] + differece;
     }
@@ -64,7 +90,7 @@ class Color {
   }
 
   getHSP(rgb) {
-    return Math.sqrt(0.299 * (rgb.r * rgb.r) + 0.587 * (rgb.g * rgb.g) + 0.114 * (rgb.b * rgb.b));
+    return Math.sqrt(0.299 * (rgb.r*rgb.r) + 0.587 * (rgb.g*rgb.g) + 0.114 * (rgb.b*rgb.b));
   }
   
 }
@@ -89,25 +115,25 @@ class Loader {
 }
 
 class Storage {
-  constructor() {
-    this.now = new Date();
-    this.expiration = false;
-    this.obj = {}
+  set(key, value, ttl=1000*60*60*24*14) {
+    const now = new Date();
+    const item = {
+      value: value, // `item` is an object which contains the original value
+      exp: now.getTime() + ttl, // as well as the time when it's supposed to expire
+    };
+    localStorage.setItem(key, JSON.stringify(item));
   }
 
-  set() {
-
-  }
-
-  get() {
-
-  }
-
-  setExpiration() {
-    this.expiration = new Date();
-    if (this.min > 0) this.expiration.setMinutes( this.now.getMinutes() + this.min );
-    if (this.hr > 0) this.expiration.setHours( this.now.getHours() + this.hr);
-    if (this.day > 0) this.expiration.setHours( this.now.getHours() + (this.day * 24));
+  get(key) {
+    const itemStr = localStorage.getItem(key);
+    if (!itemStr) return null; // if the item doesn't exist, return null
+    const item = JSON.parse(itemStr);
+    const now = new Date();
+    if (now.getTime() > item.exp) { // compare the exp time of the item with the current time
+      localStorage.removeItem(key); // If the item is expired, delete it from the storage
+      return null; // and return null
+    }
+    return item.value;
   }
 
   storageAvailable = () => {
@@ -121,7 +147,6 @@ class Storage {
       return false;
     }
   }
-  
 }
 
 export { Color, Loader, Storage };
