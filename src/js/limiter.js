@@ -1,4 +1,4 @@
-import { msgError, msgSuccess } from './util.js';
+
 // TO-DO Break this class into limiter class and storage class
 class Limiter {
   constructor(elem, status) {
@@ -97,9 +97,7 @@ class Limiter {
       minTemp = '';
     }
     this.target.disabled = true;
-    this.status.innerHTML = msgError(`
-      Limit of uses reached. Try again in ${dayTemp} ${hrTemp} ${minTemp}.
-    `);
+    this.status.innerHTML = `Limit of uses reached. Try again in ${dayTemp} ${hrTemp} ${minTemp}.`;
   }
 
   storageAvailable = () => {
