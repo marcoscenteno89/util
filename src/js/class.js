@@ -1,4 +1,4 @@
-import { post } from "./util";
+import { post } from "./util.js";
 
 class Color {
   constructor(hex) {
