@@ -1,4 +1,3 @@
-import { msgError, msgSuccess } from './util.js';
 import { Loader } from './class.js';
 class Form {
   // TO-DO add functionality so the form will only submit the action
@@ -99,7 +98,7 @@ class Form {
       if (this.tabList[this.currentTab].step) {
         this.tabList[this.currentTab].step.classList.add('error');
       }
-      this.status.innerHTML = msgError(msg);
+      this.status.innerHTML = msg;
       return false;
     }
 
