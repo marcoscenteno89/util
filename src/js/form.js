@@ -98,7 +98,7 @@ class Form {
       if (this.tabList[this.currentTab].step) {
         this.tabList[this.currentTab].step.classList.add('error');
       }
-      this.status.innerHTML = msg;
+      this.status.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
       return false;
     }
 
