@@ -15,7 +15,7 @@ const get = (url, cstmSettings={}) => {
   }).then(data => {
     data.ok = tmp;
     return data;
-  }).catch(err => err);
+  }).catch(err => console.log(err));
 }
 
 const post = (url, body, headers={}, settings={}) => {
