@@ -30,10 +30,9 @@ class Form {
       tab.id = `id-${name.toLowerCase().replace(' ', '-')}`;
 
       if (this.stepContainer) {
-        const width = `style="flex: 0 1 ${100 / tabListNode.length}%;"`;
         const number = tabListNode.length > 1 ? `<span class="number">${i + 1}</span>${dot}` : '';
         this.stepContainer.insertAdjacentHTML("beforeend", `
-          <div ${width} class="step step-${i} flex-col" data-step="${i}">
+          <div class="step step-${i}" data-step="${i}">
             ${number}
             <span class="title">${name.toUpperCase()}</span>
           </div>
@@ -44,10 +43,6 @@ class Form {
 
       this.tabList.push({ valid: true, index: i, name, tab, step, values: {} });
     });
-
-    for (const btn of this.controller.children) {
-      btn.style.width = `${100 / this.controller.children.length}%`;
-    }
 
     this.next.addEventListener('click', changeTab);
     this.previous?.addEventListener('click', changeTab);
@@ -79,7 +74,7 @@ class Form {
     if (msg) {
       current.valid = false;
       current.step?.classList.add('error');
-      this.status.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
+      this.status.innerHTML = `<div class="alert">${msg}</div>`;
       return false;
     }
 
@@ -91,7 +86,7 @@ class Form {
 
   showNewTab() {
     const current = this.tabList[this.currentTab];
-    current.tab.style.display = "flex";
+    current.tab.style.display = "grid";
     this.next.setAttribute("data-step", this.currentTab + 1);
 
     if (this.previous) {
@@ -119,7 +114,7 @@ class Form {
 
   async changeTab(event) {
     this.loader.on();
-    const nextStep = parseInt(event.target.getAttribute('data-step'));
+    const nextStep = parseInt(event.currentTarget.getAttribute('data-step'));
     if (this.currentTab < nextStep) this.validateData();
 
     if (!this.tabList[this.currentTab].valid) {
