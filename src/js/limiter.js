@@ -1,7 +1,5 @@
 import { storageAvailable } from './util.js';
-
-const MINUTE = 60 * 1000;
-const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+import { MS, Timer, formatDuration } from './time.js';
 
 // Reads a whole-number data attribute; missing or invalid values fall back to `fallback`.
 const intAttr = (elem, name, fallback) => {
@@ -31,10 +29,9 @@ class Limiter {
     // Stored under the original key prefix so limits saved by older versions keep working
     this.key = `agile_${this.id}`;
     this.countLimit = intAttr(elem, 'data-limit-count', 1);
-    const minutes = intAttr(elem, 'data-limit-min', 0)
-      + intAttr(elem, 'data-limit-hr', 0) * 60
-      + intAttr(elem, 'data-limit-day', 0) * 60 * 24;
-    this.duration = minutes * MINUTE;
+    this.duration = intAttr(elem, 'data-limit-min', 0) * MS.MINUTE
+      + intAttr(elem, 'data-limit-hr', 0) * MS.HOUR
+      + intAttr(elem, 'data-limit-day', 0) * MS.DAY;
     this.persist = storageAvailable();
     this.count = 0;
     this.expiration = null;
@@ -69,7 +66,8 @@ class Limiter {
    * Clears the count and unlocks immediately.
    */
   resetLimit() {
-    clearTimeout(this.timer);
+    this.timer?.cancel();
+    this.timer = null;
     this.count = 0;
     this.expiration = null;
     this.target.disabled = false;
@@ -100,25 +98,19 @@ class Limiter {
     localStorage.setItem(this.key, JSON.stringify({ count: this.count, expiration: this.expiration }));
   }
 
-  // Disables the element, shows the wait time, and schedules the unlock. setTimeout can't wait
-  // longer than ~24.8 days, so longer locks re-check when that timer fires.
+  // Disables the element, shows the wait time, and unlocks when it's up (Timer handles waits
+  // longer than setTimeout's 24.8 day limit).
   lock() {
     this.target.disabled = true;
     if (this.status) this.status.innerHTML = `Limit of uses reached. Try again in ${this.timeLeft()}.`;
-    clearTimeout(this.timer);
-    const wait = Math.min(this.expiration - Date.now(), 2 ** 31 - 1);
-    this.timer = setTimeout(() => this.locked ? this.lock() : this.resetLimit(), wait);
+    this.timer?.cancel();
+    this.timer = new Timer(this.expiration, () => this.resetLimit());
   }
 
-  // e.g. "1 day, 2 hours and 5 minutes". Rounds up, so it never claims 0 minutes while locked.
+  // e.g. "1 day, 2 hours, and 5 minutes". Rounds up, so it never claims 0 minutes while locked.
+  // English to match the rest of the message, rather than the visitor's browser language.
   timeLeft() {
-    const total = Math.ceil((this.expiration - Date.now()) / MINUTE);
-    const parts = [
-      [Math.floor(total / 1440), 'day'],
-      [Math.floor((total % 1440) / 60), 'hour'],
-      [total % 60, 'minute']
-    ].filter(([n]) => n > 0).map(([n, unit]) => plural(n, unit));
-    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+    return formatDuration(this.expiration - Date.now(), { smallest: 'minute', round: 'up', locale: 'en-US' });
   }
 }
 

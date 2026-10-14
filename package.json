@@ -9,6 +9,7 @@
     "./class": "./src/js/class.js",
     "./limiter": "./src/js/limiter.js",
     "./form": "./src/js/form.js",
+    "./time": "./src/js/time.js",
     "./css/form": "./src/css/form.css",
     "./css/canvas": "./src/css/canvas.css"
   },

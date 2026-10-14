@@ -1,4 +1,5 @@
 import { storageAvailable } from "./util.js";
+import { MS } from "./time.js";
 
 class Color {
   constructor(hex) {
@@ -177,16 +178,27 @@ class Loader {
 }
 
 class Storage {
-  // ttl defaults to 14 days
-  set(key, value, ttl=1000*60*60*24*14) {
+  /**
+   * Saves `value` (anything JSON can hold) for `ttl` ms, 14 days by default.
+   */
+  set(key, value, ttl=14 * MS.DAY) {
     localStorage.setItem(key, JSON.stringify({ value, exp: Date.now() + ttl }));
   }
 
+  /**
+   * The saved value, or null if missing or expired. Unreadable entries, or ones with a missing or
+   * invalid expiry (which would otherwise never expire), are deleted and treated as missing.
+   */
   get(key) {
     const itemStr = localStorage.getItem(key);
     if (!itemStr) return null;
-    const item = JSON.parse(itemStr);
-    if (Date.now() > item.exp) {
+    let item;
+    try {
+      item = JSON.parse(itemStr);
+    } catch {
+      item = null;
+    }
+    if (!Number.isFinite(item?.exp) || Date.now() > item.exp) {
       localStorage.removeItem(key);
       return null;
     }

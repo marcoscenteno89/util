@@ -6,6 +6,7 @@
 #### List of classes to interact with HTML5 canvas
 #### Loader class
 #### Limiter class (disables certain element after event hits a limit)
+#### Time utilities (durations, dates, stopwatch, countdown timer)
 
 
 
@@ -87,6 +88,49 @@ orbit.add(new Ellipse(scene, { pos: { x: 0, y: 0 }, size: 10 }), { angle: 0, spe
 
 #### Other exports
 `Line`, `Flowfield`, `CanvasObject` (base class), `createColor`, `linearGradient`, `radialGradient`, `randomPosition`, `canvasObserver`.
+
+### Time utilities
+
+Built on the browser's `Intl` APIs: no dependencies, and text follows the visitor's language unless you pass a `locale`.
+
+``` js
+import { MS, duration, formatDuration, timeAgo, formatDate, parseDate, Stopwatch, Timer, every } from '@marccent/util/time';
+
+// Constants and splitting
+MS.DAY                                          // 86400000
+duration(93784005)                              // { days: 1, hours: 2, minutes: 3, seconds: 4, milliseconds: 5, negative: false }
+
+// Durations as text
+formatDuration(93784005)                        // "1 day, 2 hours, 3 minutes, and 4 seconds"
+formatDuration(93784005, { smallest: 'minute' }) // "1 day, 2 hours, and 3 minutes"
+formatDuration(93784005, { style: 'short' })    // "1d 2h 3m 4s"
+formatDuration(65420, { style: 'clock', fraction: 2 }) // "00:01:05.42"
+
+// Relative time
+timeAgo(Date.now() - 5 * MS.MINUTE)             // "5 minutes ago"
+timeAgo(Date.now() + 2 * MS.HOUR)               // "in 2 hours"
+
+// Dates
+formatDate(new Date(), 'weekday')               // "Wed, Oct 14, 3:05 PM"  (also 'date', 'long', 'time', 'clock', 'datetime', 'iso')
+formatDate(new Date(), 'time', { timeZone: 'America/Denver' })
+parseDate('2026-10-14')                         // local midnight (plain JS would give UTC, often the day before)
+parseDate('2026-10-14 21:00:00', { utc: true }) // API strings without a zone, e.g. OpenWeather dt_txt
+parseDate(1792008000)                           // epoch seconds or milliseconds
+
+// Stopwatch: accurate in background tabs, pause/resume, laps
+const sw = new Stopwatch().start();
+sw.lap();                                       // { total, split }
+sw.stop();
+sw.toString();                                  // "00:01:05.42"
+
+// Countdown timer: works past setTimeout's 24.8 day limit, survives reloads via JSON
+const timer = new Timer(10 * MS.MINUTE, () => console.log('done'));
+timer.toString({ smallest: 'minute' });         // "10 minutes"
+localStorage.setItem('t', JSON.stringify(timer)); // later: Timer.from(JSON.parse(localStorage.getItem('t')), onEnd)
+
+// Ticks lined up with the clock; returns a stop function
+const stop = every(MS.SECOND, now => render(now), { immediate: true });
+```
 
 ### Multi-step form
 
