@@ -1,6 +1,6 @@
 {
   "name": "@marccent/util",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "This project contains a list of utility classes",
   "type": "module",
   "exports": {

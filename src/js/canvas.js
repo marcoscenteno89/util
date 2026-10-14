@@ -1,483 +1,600 @@
-const toRgba = (c) => `rgba(${c.levels[0]}, ${c.levels[1]}, ${c.levels[2]}, ${c.levels[3]})`;
-const toHex = (...rgb) => `#${rgb.map(c => c.toString(16).padStart(2, '0')).join('')}`;
+/**
+ * Canvas utilities for p5.js 1.x in instance mode.
+ * Angles are always radians, regardless of p.angleMode().
+ */
+
+const toRgba = c => `rgba(${c.levels[0]}, ${c.levels[1]}, ${c.levels[2]}, ${c.levels[3] / 255})`;
+const toHex = (r, g, b) => `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+const toVector = (p, v) => typeof v === 'number' ? p.createVector(v, v) : p.createVector(v.x, v.y);
 
 /**
- * Calls p5 `loop()` while `node` is in the viewport and `noLoop()` when it leaves.
+ * Runs the p5 draw loop only while `node` is in the viewport. Returns the observer.
  */
-const canvasObserver = (obj, node) => {
-  new IntersectionObserver(entries => {
-    entries.forEach(entry => entry.isIntersecting ? obj.loop() : obj.noLoop());
-  }).observe(node);
-}
-
-/**
- * Builds a color config `{ fill: p5.Color[], stroke, weight }`. Each fill color gets a `hex` property.
- */
-const setColor = (p, colorList, stroke=false, weight=1) => {
-  const fill = colorList.map(color => {
-    const colorObj = p.color(color);
-    colorObj.hex = toHex(...colorObj.levels.slice(0, 3));
-    return colorObj;
+const canvasObserver = (p, node) => {
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => entry.isIntersecting ? p.loop() : p.noLoop());
   });
-  return { fill, stroke: stroke ? p.color(stroke) : false, weight };
-}
-
-const linearGradient = (ctx, p, start, end, colorList) => {
-  try {
-    const gradient = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
-    colorList.forEach((item, i) => {
-      gradient.addColorStop(parseFloat(p.map(i, 0, colorList.length - 1, 0, 1)), toRgba(item));
-    });
-    return gradient;
-  } catch (error) {
-    console.log(colorList, 'start', start, 'end', end);
-    console.log(error);
-  }
-}
-
-// `p` is unused; kept so the signature matches linearGradient.
-const radialGradient = (ctx, p, mass, pos, colorList) => {
-  try {
-    const radius = mass.x / 2;
-    const gradient = ctx.createRadialGradient(pos.x, pos.y, radius / 2, pos.x, pos.y, radius);
-    colorList.forEach((item, i) => {
-      gradient.addColorStop(parseFloat((i / colorList.length).toFixed(1)), toRgba(item));
-    });
-    return gradient;
-  } catch (error) {
-    console.log(colorList, 'pos', pos, 'mass', mass);
-    console.log(error);
-  }
+  observer.observe(node);
+  return observer;
 }
 
 /**
- * Random vector inside the canvas, keeping `size` px away from the edges.
+ * Builds a style `{ fill: p5.Color[], stroke: p5.Color|null, weight }`.
+ * `fill` is one color or an array of colors; several render as a radial gradient.
+ * Each fill color gets a `hex` property.
  */
-const ranVector = (canvas, size) => {
-  const { p } = canvas;
-  return p.createVector(p.random(size, p.width - size), p.random(size, p.height - size));
+const createColor = (p, fill=[], { stroke=null, weight=1 } = {}) => ({
+  fill: [].concat(fill).map(c => {
+    const color = p.color(c);
+    color.hex = toHex(...color.levels.slice(0, 3));
+    return color;
+  }),
+  stroke: stroke === null ? null : p.color(stroke),
+  weight
+});
+
+const addStops = (gradient, colors) => {
+  colors.forEach((c, i) => {
+    gradient.addColorStop(colors.length > 1 ? i / (colors.length - 1) : 0, toRgba(c));
+  });
+  return gradient;
+}
+
+const linearGradient = (ctx, start, end, colors) => {
+  return addStops(ctx.createLinearGradient(start.x, start.y, end.x, end.y), colors);
+}
+
+/**
+ * @param inner - inner radius as a fraction of `radius`; the first color fills it solid
+ */
+const radialGradient = (ctx, pos, radius, colors, inner=0.5) => {
+  return addStops(ctx.createRadialGradient(pos.x, pos.y, radius * inner, pos.x, pos.y, radius), colors);
+}
+
+/**
+ * Random position inside the canvas, at least `margin` px from the edges.
+ */
+const randomPosition = (manager, margin=0) => {
+  const { p } = manager;
+  return p.createVector(p.random(margin, p.width - margin), p.random(margin, p.height - margin));
 }
 
 class CanvasManager {
-  constructor(p5, p, elem) {
-    this.canvas = p.createCanvas(elem.offsetWidth, elem.offsetHeight, elem);
-    this.p5 = p5;
+  /**
+   * @param p - p5 instance
+   * @param elem - container element the canvas fills (if a <canvas> is passed, its parent is used)
+   * @param [o.background] - color, CanvasGradient, or null to leave trails
+   * @param [o.collisions=false] - resolve collisions between objects on every update()
+   * @param [o.autoResize=true] - follow the container's size
+   * @param [o.pauseOffscreen=true] - stop the draw loop while the canvas is off screen
+   */
+  constructor(p, elem, { background=null, collisions=false, autoResize=true, pauseOffscreen=true } = {}) {
     this.p = p;
-    this.center = p.createVector(p.width / 2, p.height / 2);
-    this.avg = parseInt((p.width + p.height) / 2);
+    this.container = elem.tagName === 'CANVAS' ? elem.parentElement : elem;
+    this.canvas = p.createCanvas(this.container.clientWidth, this.container.clientHeight);
+    this.canvas.parent(this.container);
     this.ctx = this.canvas.drawingContext;
-    this.flowfield = {};
+    this.background = background;
+    this.collisions = collisions;
     this.objects = [];
+    this.flowfield = null;
+
+    if (autoResize) {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(this.container);
+    }
+    if (pauseOffscreen) this.intersectionObserver = canvasObserver(p, this.container);
   }
 
-  getFieldZone(pos) {
-    const x = this.p.floor(pos.x / this.flowfield.width);
-    const y = this.p.floor(pos.y / this.flowfield.width);
-    return this.flowfield.field[x][y];
+  get width() { return this.p.width; }
+  get height() { return this.p.height; }
+  get center() { return this.p.createVector(this.p.width / 2, this.p.height / 2); }
+
+  resize() {
+    const { clientWidth: w, clientHeight: h } = this.container;
+    if (!w || !h || (w === this.p.width && h === this.p.height)) return;
+    this.p.resizeCanvas(w, h);
+    this.flowfield?.build();
+  }
+
+  add(...objects) {
+    this.objects.push(...objects);
+    return objects[0];
+  }
+
+  remove(obj) {
+    const i = this.objects.indexOf(obj);
+    if (i >= 0) this.objects.splice(i, 1);
   }
 
   /**
-   * Points each flowfield cell along Perlin noise.
+   * Creates a flowfield sized to the canvas. See Flowfield for options.
    */
-  updateFlowfield() {
-    this.p.angleMode(this.p.RADIANS);
-    let yoff = 0;
-    for (const col of this.flowfield.field) {
-      let xoff = 0;
-      for (const cell of col) {
-        const angle = this.p.noise(xoff, yoff, this.flowfield.offset) * this.p.TWO_PI * 4;
-        cell.vel.set(this.p5.Vector.fromAngle(angle).setMag(1));
-        xoff += this.flowfield.multiplier;
-      }
-      yoff += this.flowfield.multiplier;
-      this.flowfield.offset += 0.0001;
+  setFlowfield(options) {
+    this.flowfield = new Flowfield(this, options);
+    return this.flowfield;
+  }
+
+  drawBackground() {
+    const { background: bg, ctx, p } = this;
+    if (bg === null) return;
+    if (bg instanceof CanvasGradient) {
+      ctx.save();
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, p.width, p.height);
+      ctx.restore();
+    } else {
+      p.background(bg);
     }
   }
 
-  drawFlowfield() {
-    this.p.stroke(255);
-    for (const col of this.flowfield.field) {
-      for (const cell of col) {
-        this.p.push();
-        this.p.translate(cell.pos.x, cell.pos.y);
-        this.p.rotate(cell.vel.heading());
-        this.p.line(0, 0, this.flowfield.width / 2, 0);
-        this.p.pop();
-      }
-    }
+  bounceEdges() {
+    for (const obj of this.objects) obj.bounceEdges?.();
   }
 
   /**
-   * Creates a grid of `num` px cells.
-   * @param num - cell size in px
-   * @param offset - starting noise z-offset
-   * @param multiplier - noise step between cells
+   * Resolves collisions between every pair of objects that support it.
    */
-  setFlowfield(num, offset, multiplier) {
-    Object.assign(this.flowfield, { width: num, offset, multiplier, field: [] });
-    for (let x = 0; x < this.p.width / num; x++) {
-      const col = [];
-      for (let y = 0; y < this.p.height / num; y++) {
-        const mass = this.p.createVector(num, num);
-        const pos = this.p.createVector(x * num + num / 2, y * num + num / 2);
-        col.push(new Rect(this, pos, false, false, mass, setColor(this.p, ['pink'])));
-      }
-      this.flowfield.field.push(col);
+  collide() {
+    const list = this.objects.filter(obj => obj.collide);
+    for (let i = 0; i < list.length; i++) {
+      for (let e = i + 1; e < list.length; e++) list[i].collide(list[e]);
     }
-  }
-
-  bg() {
-    this.p.rectMode(this.p.CORNER);
-    this.ctx.fillStyle = this.background;
-    this.p.rect(0, 0, this.p.width, this.p.height);
-    this.p.rectMode(this.p.CENTER);
-  }
-
-  applyGradient() {
-    this.ctx.fillStyle = this.background;
-  }
-
-  bounceOfBorder() {
-    for (const obj of this.objects) obj.bounceOfBorder();
   }
 
   overlaps(obj) {
-    return this.objects.some(i => i.madeContact(obj));
+    return this.objects.some(other => other !== obj && other.overlaps?.(obj));
   }
 
   /**
-   * Resolves collisions between every pair of objects.
+   * Updates the flowfield and every object, removes dead objects, then resolves collisions.
    */
-  bounceOfObject() {
-    for (let i = 0; i < this.objects.length; i++) {
-      for (let e = i + 1; e < this.objects.length; e++) {
-        this.objects[i].collide(this.objects[e]);
-      }
+  update() {
+    this.flowfield?.update();
+    for (let i = this.objects.length - 1; i >= 0; i--) {
+      this.objects[i].update();
+      if (this.objects[i].dead) this.objects.splice(i, 1);
     }
+    if (this.collisions) this.collide();
+  }
+
+  draw() {
+    this.drawBackground();
+    if (this.flowfield?.visible) this.flowfield.draw();
+    for (const obj of this.objects) obj.draw();
+  }
+
+  /**
+   * One frame: update() then draw(). Call from p.draw.
+   */
+  run() {
+    this.update();
+    this.draw();
+  }
+
+  destroy() {
+    this.resizeObserver?.disconnect();
+    this.intersectionObserver?.disconnect();
   }
 }
 
 /**
- * Base class for canvas objects. Does not draw; subclasses implement `draw(pos)`.
- * @param angle - [initialAngle, angularVelocity?]
- * @param life - frames until the object is removed (false = immortal)
+ * Grid of unit vectors driven by Perlin noise.
+ * @param [o.cellSize=20] - cell size in px
+ * @param [o.step=0.1] - noise step between neighboring cells (lower = smoother)
+ * @param [o.speed=0.005] - noise z-offset added per frame (higher = changes faster)
+ * @param [o.offset=0] - starting noise z-offset
+ * @param [o.visible=false] - draw the field in manager.draw()
  */
-class Shape {
-  constructor(canvas, pos, vel=false, acc=false, mass, color=false, angle=[0], life=false) {
-    this.p5 = canvas.p5;
-    this.canvas = canvas.canvas;
-    this.p = canvas.p;
-    this.objects = canvas.objects;
-    this.ctx = canvas.ctx;
-    this.id = this.objects.length + 1;
-    this.pos = pos;
-    this.mass = mass;
-    this.vel = vel || this.p.createVector(0, 0);
-    this.acc = acc || this.p.createVector(0, 0);
-    this.color = color;
-    this.original = {
-      pos: { ...pos },
-      mass: { ...mass },
-      vel: { ...vel },
-      acc: { ...acc },
-      color: { ...color }
-    };
-    this.init(angle, life);
-    this.setColor(this.color);
+class Flowfield {
+  constructor(manager, { cellSize=20, step=0.1, speed=0.005, offset=0, visible=false } = {}) {
+    this.manager = manager;
+    this.p = manager.p;
+    Object.assign(this, { cellSize, step, speed, offset, visible });
+    this.build();
   }
 
-  init(angle, life) {
-    this.angle = { angle: angle[0], vel: angle[1] ?? 0 };
-    this.original.angle = { ...this.angle };
+  build() {
+    const { p, cellSize } = this;
+    const half = cellSize / 2;
+    this.cols = Math.ceil(p.width / cellSize);
+    this.rows = Math.ceil(p.height / cellSize);
+    this.field = Array.from({ length: this.cols }, (_, x) =>
+      Array.from({ length: this.rows }, (_, y) => ({
+        pos: p.createVector(x * cellSize + half, y * cellSize + half),
+        vel: p.createVector(1, 0)
+      }))
+    );
+  }
 
-    if (life) {
-      const unit = this.mass.x - this.p.map(life - 1, 0, life, 0, this.mass.x);
-      this.life = { time: life, unit, vector: this.p.createVector(unit, unit) };
-      this.original.life = { ...this.life };
+  update() {
+    const { p, step } = this;
+    for (let x = 0; x < this.cols; x++) {
+      for (let y = 0; y < this.rows; y++) {
+        const angle = p.noise(x * step, y * step, this.offset) * Math.PI * 8;
+        this.field[x][y].vel.set(Math.cos(angle), Math.sin(angle));
+      }
     }
+    this.offset += this.speed;
   }
 
-  sizeLife() {
-    if (this.life.time > 0) this.mass.sub(this.life.vector);
+  /**
+   * Cell under `pos`, clamped to the grid.
+   */
+  lookup(pos) {
+    const x = Math.min(this.cols - 1, Math.max(0, Math.floor(pos.x / this.cellSize)));
+    const y = Math.min(this.rows - 1, Math.max(0, Math.floor(pos.y / this.cellSize)));
+    return this.field[x][y];
   }
 
-  colorLife() {
-    if (this.life.time > 0) {
-      const alpha = this.p.map(this.life.time, 0, this.original.life.time / 2, 0, 255);
-      this.color.setAlpha(parseInt(alpha));
+  draw(color=255) {
+    const { p } = this;
+    const len = this.cellSize / 2;
+    p.push();
+    p.stroke(color);
+    for (const col of this.field) {
+      for (const { pos, vel } of col) p.line(pos.x, pos.y, pos.x + vel.x * len, pos.y + vel.y * len);
     }
+    p.pop();
+  }
+}
+
+/**
+ * Base for anything the manager updates and draws.
+ */
+class CanvasObject {
+  static #nextId = 1;
+
+  constructor(manager) {
+    this.manager = manager;
+    this.p = manager.p;
+    this.ctx = manager.ctx;
+    this.id = CanvasObject.#nextId++;
   }
 
-  updateLife(index) {
-    if (this.life.time > 0) {
-      this.life.time--;
+  get dead() { return false; }
+  update() {}
+  draw() {}
+
+  applyStyle(style, gradient=null) {
+    const { p } = this;
+    if (style.stroke) {
+      p.strokeWeight(style.weight);
+      p.stroke(style.stroke);
     } else {
-      this.objects.splice(index, 1);
+      p.noStroke();
     }
+    if (!style.fill.length) return p.noFill();
+    p.fill(style.fill[0]);
+    // p5 fills with ctx.fillStyle, so the gradient must be set after p.fill()
+    if (gradient) this.ctx.fillStyle = gradient;
+  }
+}
+
+/**
+ * Base for moving shapes. Subclasses implement `shape()`, drawing centered at (0, 0).
+ * @param o.pos - {x, y}
+ * @param o.size - number or {x, y} (width, height)
+ * @param [o.vel] [o.acc] - {x, y}
+ * @param [o.mass] - defaults to size.x
+ * @param [o.color='#fff'] - createColor() style, or any p5 color / array of colors
+ * @param [o.angle=0] - rotation in radians
+ * @param [o.spin=0] - rotation added per frame
+ * @param [o.maxSpeed=Infinity]
+ * @param [o.life] - frames until the shape is removed
+ * @param [o.shrink=false] - shrink to 0 over its life
+ * @param [o.fade=false] - fade out over the second half of its life
+ */
+class Shape extends CanvasObject {
+  constructor(manager, {
+    pos, size, vel={ x: 0, y: 0 }, acc={ x: 0, y: 0 }, mass, color='#fff',
+    angle=0, spin=0, maxSpeed=Infinity, life=null, shrink=false, fade=false
+  }) {
+    super(manager);
+    const { p } = this;
+    this.pos = toVector(p, pos);
+    this.size = toVector(p, size);
+    this.vel = toVector(p, vel);
+    this.acc = toVector(p, acc);
+    this.mass = mass ?? this.size.x;
+    this.angle = angle;
+    this.spin = spin;
+    this.maxSpeed = maxSpeed;
+    this.life = life ? { total: life, remaining: life, shrink, fade } : null;
+
+    // Own copies of the colors so fading one shape never changes another
+    const style = Array.isArray(color.fill) ? color : createColor(p, color);
+    this.color = { ...style, fill: style.fill.map(c => Object.assign(p.color(toRgba(c)), { hex: c.hex })) };
+    this.alpha = this.color.fill.map(c => c.levels[3]);
+
+    this.original = { pos: this.pos.copy(), size: this.size.copy(), vel: this.vel.copy(), angle };
+    this.gradient = null;
+    this.gradientKey = null;
   }
 
-  applyForce(force, speedLimit) {
-    this.acc.add(this.p5.Vector.div(force, this.mass.x));
-    this.vel.add(this.acc);
-    this.vel.limit(speedLimit);
+  get radius() { return Math.max(this.size.x, this.size.y) / 2; }
+  get dead() { return this.life !== null && this.life.remaining <= 0; }
+
+  reset() {
+    this.pos.set(this.original.pos);
+    this.size.set(this.original.size);
+    this.vel.set(this.original.vel);
+    this.acc.set(0, 0);
+    this.angle = this.original.angle;
+    if (this.life) this.life.remaining = this.life.total;
+    this.color.fill.forEach((c, i) => c.setAlpha(this.alpha[i]));
+  }
+
+  /**
+   * Adds a force for the next update(). Does not move the shape.
+   */
+  applyForce(force) {
+    this.acc.add(force.x / this.mass, force.y / this.mass);
+  }
+
+  /**
+   * Pulls `other` toward this shape.
+   */
+  attract(other, G=1) {
+    const force = this.pos.copy().sub(other.pos);
+    const distanceSq = this.p.constrain(force.magSq(), 100, 1000);
+    force.setMag((G * this.mass * other.mass) / distanceSq);
+    other.applyForce(force);
+  }
+
+  update() {
+    this.vel.add(this.acc).limit(this.maxSpeed);
     this.pos.add(this.vel);
     this.acc.set(0, 0);
+    this.angle += this.spin;
+    if (this.life) this.updateLife();
   }
 
-  attract(mover) {
-    const force = this.p5.Vector.sub(this.pos, mover.pos);
-    const distanceSq = this.p.constrain(force.magSq(), 100, 1000);
-    const G = 1;
-    force.setMag((G * this.mass.x * mover.mass.x) / distanceSq);
-    mover.applyForce(force);
-  }
-
-  bounceOfBorder() {
-    const halfX = this.mass.x / 2;
-    const halfY = this.mass.y / 2;
-    const x = this.pos.x + this.vel.x;
-    const y = this.pos.y + this.vel.y;
-
-    if (y < halfY)                       this.vel.y = -this.vel.y;   // Top
-    if (x > this.canvas.width - halfX)   this.vel.x = -this.vel.x;   // Right
-    if (y > this.canvas.height - halfY)  this.vel.y = -this.vel.y;   // Bottom
-    if (x < halfX)                       this.vel.x = -this.vel.x;   // Left
-
-    this.pos.add(this.vel);
+  updateLife() {
+    const life = this.life;
+    life.remaining = Math.max(0, life.remaining - 1);
+    const ratio = life.remaining / life.total;
+    if (life.shrink) this.size.set(this.original.size.x * ratio, this.original.size.y * ratio);
+    if (life.fade) {
+      const fade = Math.min(1, ratio * 2);
+      this.color.fill.forEach((c, i) => c.setAlpha(this.alpha[i] * fade));
+    }
   }
 
   /**
-   * Wraps the object to the opposite side when it leaves the canvas.
+   * Keeps the shape inside the canvas, reversing velocity at the edges.
    */
-  edges() {
-    const halfX = this.mass.x / 2;
-    const halfY = this.mass.y / 2;
-
-    if (this.pos.x > this.p.width - halfX) this.pos.x = halfX;
-    if (this.pos.x < halfX) this.pos.x = this.p.width - halfX;
-    if (this.pos.y > this.p.height - halfY) this.pos.y = halfY;
-    if (this.pos.y < halfY) this.pos.y = this.p.height - halfY;
+  bounceEdges() {
+    const { width, height } = this.p;
+    const hx = this.size.x / 2;
+    const hy = this.size.y / 2;
+    if (this.pos.x < hx) { this.pos.x = hx; this.vel.x = Math.abs(this.vel.x); }
+    else if (this.pos.x > width - hx) { this.pos.x = width - hx; this.vel.x = -Math.abs(this.vel.x); }
+    if (this.pos.y < hy) { this.pos.y = hy; this.vel.y = Math.abs(this.vel.y); }
+    else if (this.pos.y > height - hy) { this.pos.y = height - hy; this.vel.y = -Math.abs(this.vel.y); }
   }
 
   /**
-   * Separates overlapping objects and exchanges velocity along the collision normal.
+   * Moves the shape to the opposite side when it leaves the canvas.
+   */
+  wrapEdges() {
+    const { width, height } = this.p;
+    const hx = this.size.x / 2;
+    const hy = this.size.y / 2;
+    if (this.pos.x > width - hx) this.pos.x = hx;
+    else if (this.pos.x < hx) this.pos.x = width - hx;
+    if (this.pos.y > height - hy) this.pos.y = hy;
+    else if (this.pos.y < hy) this.pos.y = height - hy;
+  }
+
+  overlaps(other) {
+    return this.pos.dist(other.pos) <= this.radius + other.radius;
+  }
+
+  /**
+   * Elastic collision treating both shapes as circles. Returns true if they touched.
    */
   collide(other) {
-    const relative = this.p5.Vector.sub(other.pos, this.pos);
-    const dist = relative.mag() - (this.mass.x / 2 + other.mass.x / 2);
-    if (dist < 0) {
-      const movement = relative.copy().setMag(this.p.abs(dist / 2));
-      this.pos.sub(movement);
-      other.pos.add(movement);
-      const normal = relative.copy().normalize();
-      const approachSpeed = this.vel.dot(normal) - other.vel.dot(normal);
-      const approachVector = normal.copy().setMag(approachSpeed);
-      this.vel.sub(approachVector);
-      other.vel.add(approachVector);
+    const normal = other.pos.copy().sub(this.pos);
+    const dist = normal.mag();
+    const overlap = this.radius + other.radius - dist;
+    if (overlap <= 0) return false;
+    if (dist === 0) normal.set(1, 0);
+    else normal.div(dist);
+
+    // Push apart, heavier shapes move less
+    const total = this.mass + other.mass;
+    this.pos.sub(normal.x * overlap * other.mass / total, normal.y * overlap * other.mass / total);
+    other.pos.add(normal.x * overlap * this.mass / total, normal.y * overlap * this.mass / total);
+
+    // Exchange momentum along the normal, unless already separating
+    const approach = this.vel.dot(normal) - other.vel.dot(normal);
+    if (approach > 0) {
+      const impulse = (2 * approach) / total;
+      this.vel.sub(normal.x * impulse * other.mass, normal.y * impulse * other.mass);
+      other.vel.add(normal.x * impulse * this.mass, normal.y * impulse * this.mass);
     }
+    return true;
   }
 
-  madeContactX(obj) {
-    return this.p5.Vector.dist(this.pos, obj.pos) <= this.mass.x / 2 + obj.mass.y / 2;
-  }
-
-  madeContactY(obj) {
-    return this.p5.Vector.dist(this.pos, obj.pos) <= this.mass.y / 2 + obj.mass.y / 2;
-  }
-
-  madeContact(obj) {
-    const distance = this.p5.Vector.dist(this.pos, obj.pos);
-    return distance <= this.mass.x / 2 + obj.mass.x / 2
-        || distance <= this.mass.y / 2 + obj.mass.y / 2;
-  }
-
-  /**
-   * Applies stroke/fill from a `setColor()` config. Multiple fills render as a radial gradient.
-   */
-  setColor(color) {
-    if (!color) {
-      this.p.noStroke();
-      return false;
+  // Cached; rebuilt only when size or colors change
+  getGradient() {
+    if (this.color.fill.length < 2) return null;
+    const key = `${this.size.x}|${this.color.fill.map(toRgba).join()}`;
+    if (key !== this.gradientKey) {
+      this.gradient = radialGradient(this.ctx, { x: 0, y: 0 }, this.size.x / 2, this.color.fill);
+      this.gradientKey = key;
     }
-    if (color.stroke) {
-      this.p.strokeWeight(color.weight);
-      this.p.stroke(color.stroke);
-    } else {
-      this.p.noStroke();
-    }
-
-    if (color.fill.length > 1) {
-      this.ctx.fillStyle = radialGradient(this.ctx, this.p, this.mass, this.pos, color.fill);
-      this.ctx.fill();
-    } else if (color.fill.length === 1) {
-      this.p.fill(color.fill[0]);
-    } else {
-      this.p.noFill();
-    }
+    return this.gradient;
   }
 
-  /**
-   * Rotates by `angle` (defaults to angular velocity) and draws at the origin of the rotated frame.
-   */
-  rotate(angle=false) {
-    this.angle.angle += angle || this.angle.vel;
-    this.p.push();
-    this.p.translate(this.pos.x, this.pos.y);
-    this.p.rotate(this.angle.angle);
-    this.draw(this.p.createVector(0, 0));
-    this.p.pop();
+  draw() {
+    const { p } = this;
+    p.push();
+    p.translate(this.pos.x, this.pos.y);
+    if (this.angle) this.ctx.rotate(this.angle);
+    this.applyStyle(this.color, this.getGradient());
+    this.shape();
+    p.pop();
   }
+
+  shape() {}
 }
 
 class Ellipse extends Shape {
-  constructor(canvas, pos, vel, acc, mass, color, angle, life) {
-    super(canvas, pos, vel, acc, mass, color, angle, life);
+  shape() {
     this.p.ellipseMode(this.p.CENTER);
-  }
-
-  draw(pos=false) {
-    this.setColor(this.color);
-    const { x, y } = pos || this.pos;
-    this.p.ellipse(x, y, this.mass.x, this.mass.y);
+    this.p.ellipse(0, 0, this.size.x, this.size.y);
   }
 }
 
+/**
+ * @param [o.corner=0] - corner radius
+ */
 class Rect extends Shape {
-  constructor(canvas, pos, vel, acc, mass, color, angle, life, radius=0) {
-    super(canvas, pos, vel, acc, mass, color, angle, life);
-    this.radius = radius;
+  constructor(manager, options) {
+    super(manager, options);
+    this.corner = options.corner ?? 0;
+  }
+
+  shape() {
     this.p.rectMode(this.p.CENTER);
-  }
-
-  draw(pos=false) {
-    this.setColor(this.color);
-    const { x, y } = pos || this.pos;
-    this.p.rect(x, y, this.mass.x, this.mass.y, this.radius);
+    this.p.rect(0, 0, this.size.x, this.size.y, this.corner);
   }
 }
 
-// TO-DO draw() not implemented
+/**
+ * Triangle inside the size box, pointing along the shape's angle.
+ */
 class Triangle extends Shape {
-  draw() {
-    this.setColor(this.color);
+  shape() {
+    const hx = this.size.x / 2;
+    const hy = this.size.y / 2;
+    this.p.triangle(-hx, -hy, -hx, hy, hx, 0);
   }
 }
 
+/**
+ * Regular polygon inside the size box.
+ * @param [o.sides=6]
+ */
 class Polygon extends Shape {
-  constructor(canvas, pos, vel, acc, mass, color, angle, life, sides) {
-    super(canvas, pos, vel, acc, mass, color, angle, life);
-    this.sides = sides;
+  constructor(manager, options) {
+    super(manager, options);
+    this.sides = options.sides ?? 6;
   }
 
-  draw(pos=false) {
-    this.setColor(this.color);
-    const { x, y } = pos || this.pos;
-    const radius = this.mass.x / 2;
-    const angle = 360 / this.sides;
+  shape() {
+    const step = (Math.PI * 2) / this.sides;
     this.p.beginShape();
     for (let i = 0; i < this.sides; i++) {
-      this.p.vertex(x + radius * this.p.cos(angle * i), y + radius * this.p.sin(angle * i));
+      this.p.vertex(Math.cos(step * i) * this.size.x / 2, Math.sin(step * i) * this.size.y / 2);
     }
     this.p.endShape(this.p.CLOSE);
   }
 }
 
-class Line {
-  constructor(canvas, start, end, vel=false, color=false) {
-    this.p5 = canvas.p5;
-    this.canvas = canvas.canvas;
-    this.p = canvas.p;
-    this.objects = canvas.objects;
-    this.id = this.objects.length + 1;
-    this.start = start;
-    this.end = end;
-    this.vel = vel || this.p.createVector(0, 0);
-    this.color = color;
-    this.original = {
-      start: { ...start },
-      end: { ...end },
-      vel: { ...vel },
-      color: { ...color }
-    };
-    this.draw();
+/**
+ * Line segment, e.g. for trails.
+ * @param o.start o.end - {x, y}
+ * @param [o.color=255] [o.weight=1]
+ * @param [o.speed=1] - length of getDisplacement()
+ */
+class Line extends CanvasObject {
+  constructor(manager, { start, end, color=255, weight=1, speed=1 }) {
+    super(manager);
+    this.start = toVector(this.p, start);
+    this.end = toVector(this.p, end);
+    this.color = this.p.color(color);
+    this.weight = weight;
+    this.speed = speed;
   }
 
   getDisplacement() {
-    return this.p5.Vector.sub(this.start, this.end).normalize().mult(this.vel);
-  }
-
-  setColor(color) {
-    if (!color) return false;
-    if (color.stroke) {
-      this.p.strokeWeight(color.weight);
-      this.p.stroke(color.stroke);
-    } else {
-      this.p.noStroke();
-    }
-  }
-
-  updatePrev() {
-    this.start.x = this.end.x;
-    this.start.y = this.end.y;
+    return this.start.copy().sub(this.end).setMag(this.speed);
   }
 
   /**
-   * Wraps the end point to the opposite side when it leaves the canvas.
+   * Moves the line forward: the old end becomes the start.
    */
-  edges() {
-    const { width, height } = this.p;
-    if (this.end.x > width) { this.end.x = 0; this.updatePrev(); }
-    if (this.end.x < 0) { this.end.x = width; this.updatePrev(); }
-    if (this.end.y > height) { this.end.y = 0; this.updatePrev(); }
-    if (this.end.y < 0) { this.end.y = height; this.updatePrev(); }
-  }
-
   add(pos) {
     this.start.set(this.end);
-    this.end.set(pos);
+    this.end.set(pos.x, pos.y);
   }
 
   remove(pos) {
     this.end.set(this.start);
-    this.start.set(pos);
+    this.start.set(pos.x, pos.y);
+  }
+
+  /**
+   * Moves the end to the opposite side when it leaves the canvas, without drawing across.
+   */
+  wrapEdges() {
+    const { width, height } = this.p;
+    let wrapped = false;
+    if (this.end.x > width) { this.end.x = 0; wrapped = true; }
+    else if (this.end.x < 0) { this.end.x = width; wrapped = true; }
+    if (this.end.y > height) { this.end.y = 0; wrapped = true; }
+    else if (this.end.y < 0) { this.end.y = height; wrapped = true; }
+    if (wrapped) this.start.set(this.end);
   }
 
   draw() {
-    this.setColor(this.color);
+    this.p.strokeWeight(this.weight);
+    this.p.stroke(this.color);
     this.p.line(this.start.x, this.start.y, this.end.x, this.end.y);
   }
 }
 
 /**
- * Rotates `children` around `orbit.pos` at radius `orbit.mass.x / 2`.
+ * Moves child shapes in a circle around a center.
+ * Children are updated and drawn by the orbit, so don't also add them to the manager.
+ * @param o.center - {x, y} or a Shape to follow
+ * @param o.radius
  */
-class Orbit {
-  constructor(canvas, orbit) {
-    this.p5 = canvas.p5;
-    this.canvas = canvas.canvas;
-    this.p = canvas.p;
-    this.orbit = orbit;
-    this.objects = canvas.objects;
-    this.id = this.objects.length + 1;
+class Orbit extends CanvasObject {
+  constructor(manager, { center, radius }) {
+    super(manager);
+    this.center = center;
+    this.radius = radius;
     this.children = [];
   }
 
-  rotate() {
-    const r = this.orbit.mass.x / 2;
-    this.p.push();
-    this.p.translate(this.orbit.pos.x, this.orbit.pos.y);
-    for (const child of this.children) {
-      child.pos.x = r * this.p.cos(child.angle.angle);
-      child.pos.y = r * this.p.sin(child.angle.angle);
-      child.draw();
-      child.angle.angle += child.angle.vel;
+  /**
+   * @param [o.angle=0] - starting position in radians
+   * @param [o.speed=0.01] - radians per frame
+   */
+  add(shape, { angle=0, speed=0.01 } = {}) {
+    this.children.push({ shape, angle, speed });
+    this.place(this.children.at(-1));
+    return shape;
+  }
+
+  place(child) {
+    const c = this.center.pos ?? this.center;
+    child.shape.pos.set(c.x + Math.cos(child.angle) * this.radius, c.y + Math.sin(child.angle) * this.radius);
+  }
+
+  update() {
+    for (let i = this.children.length - 1; i >= 0; i--) {
+      const child = this.children[i];
+      child.shape.update();
+      if (child.shape.dead) {
+        this.children.splice(i, 1);
+        continue;
+      }
+      child.angle += child.speed;
+      this.place(child);
     }
-    this.p.pop();
+  }
+
+  draw() {
+    for (const { shape } of this.children) shape.draw();
   }
 }
 
 export {
-  Ellipse, Rect, Line, canvasObserver, CanvasManager,
-  Triangle, Polygon, Orbit, radialGradient, linearGradient,
-  setColor, ranVector
+  CanvasManager, Flowfield, CanvasObject, Shape, Ellipse, Rect, Triangle, Polygon, Line, Orbit,
+  createColor, linearGradient, radialGradient, randomPosition, canvasObserver
 }

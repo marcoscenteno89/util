@@ -9,93 +9,77 @@
 
 
 
-### Canvas Utility with P5.js README
+### Canvas utility (p5.js 1.x)
 
-#### Canvas Manager
-##### Description
-##### The CanvasManager class provides methods for creating and managing a canvas, including creating a flow field, updating the flow field, drawing the flow field, and managing objects within the canvas.
+Helpers for p5.js in instance mode. Angles are always radians, whatever `angleMode()` the sketch uses.
 
-#### Usage
-##### Here is an example of how to use the CanvasManager class:
-``` js
-import p5 from "https://esm.sh/p5";
-import { CanvasManager } from './path/to/canvas.js';
-
-let elem = document.querySelector('#canvas');
-let canvas;
-const sketch = new p5((p) => {
-  p.setup = () => {
-
-    let canvasManager = new CanvasManager(p5, p, elem);
-
-    // Set the flowfield
-    canvasManager.setFlowfield(20, 0, 0.1);
-
-    
-  };
-  p.draw = () => {
-
-    // Update the flowfield
-    canvasManager.updateFlowfield();
-
-    // Draw the flowfield
-    canvasManager.drawFlowfield();
-
-  };
-});
-```
-
-### Shape
-#### Description
-##### The Shape class provides methods for creating and managing a objects within canvas, this class does not draw into canvas and it is meant to be extended by other classes
-
-### Shape child classes
-#### Ellipse, Rect, Triangle, and Polygon
-### Description
-#### These classes extend from the shape class and contain the drawing method to draw in canvas.
-
-### Usage
-#### Here is an example of how to use the Shape class:
+#### CanvasManager
+Creates a canvas that fills a container element, follows its size, and pauses the draw loop while off screen. It owns a list of objects and runs them each frame: `update()` (forces, movement, life, collisions, removing dead objects) then `draw()`.
 
 ``` js
+import { CanvasManager, Ellipse, Rect, Polygon, Orbit, createColor } from '@marccent/util/canvas';
 
-import p5 from "https://esm.sh/p5";
-import { Ellipse, Rect, Triangle, Polygon } from './path/to/canvas.js';
-
-let elem = document.querySelector('#canvas');
-let canvas;
-const sketch = new p5((p) => {
+new p5(p => {
+  let m;
   p.setup = () => {
-    let canvasManager = new CanvasManager(p5, p, elem);
+    m = new CanvasManager(p, document.querySelector('#canvas'), {
+      background: 20,      // color, CanvasGradient, or null to leave trails
+      collisions: true     // shapes bounce off each other
+    });
 
-    // Create an ellipse
-    let pos = p.createVector(50, 50);
-    let vel = p.createVector(1, 1);
-    let acc = p.createVector(0, 0.1);
-    let mass = p.createVector(20, 20);
-    let ellipse = new Ellipse(canvasManager, pos, vel, acc, mass);
+    // Optional flowfield (Perlin noise vectors)
+    m.setFlowfield({ cellSize: 20, step: 0.1, speed: 0.005, visible: true });
 
-    // Add shape objects to canvas objects array
-    canvasManager.objects.push(ellipse);
-    
+    m.add(new Ellipse(m, {
+      pos: { x: 100, y: 100 },
+      size: 40,                                   // number or { x, y }
+      vel: { x: 2, y: 1 },
+      color: createColor(p, ['#fff', '#01a3b0'], { stroke: '#fff' })  // 2+ colors = radial gradient
+    }));
+    m.add(new Rect(m, { pos: m.center, size: { x: 80, y: 40 }, corner: 8, color: '#f4748f', spin: 0.02 }));
   };
+
   p.draw = () => {
-    for (let shapeObj of canvas.objects) {
-
-      // Handle object-object collisions
-      shapeObj.bounceOfObject();
-
-      // Handle object-border collisions
-      shapeObj.bounceOfBorder();
-      
+    for (const shape of m.objects) {
+      shape.applyForce?.(m.flowfield.lookup(shape.pos).vel);  // forces only accumulate
+      shape.bounceEdges?.();                                   // or wrapEdges()
     }
+    m.run();  // update() + draw()
   };
 });
 ```
 
+#### Shapes
+`Ellipse`, `Rect`, `Triangle` and `Polygon` extend `Shape`. All take `(manager, options)`:
 
+| Option | Default | |
+|---|---|---|
+| `pos` | required | `{ x, y }` |
+| `size` | required | number or `{ x, y }` |
+| `vel`, `acc` | `{ x: 0, y: 0 }` | |
+| `mass` | `size.x` | used by forces and collisions |
+| `color` | `'#fff'` | `createColor()` style, a p5 color, or an array of colors |
+| `angle`, `spin` | `0` | rotation and rotation per frame, radians |
+| `maxSpeed` | `Infinity` | |
+| `life` | `null` | frames until removed; add `shrink: true` / `fade: true` to animate |
+| `corner` | `0` | `Rect` only, corner radius |
+| `sides` | `6` | `Polygon` only |
 
+Methods: `applyForce(force)`, `attract(other, G)`, `update()`, `draw()`, `bounceEdges()`, `wrapEdges()`, `collide(other)`, `overlaps(other)`, `reset()`.
 
+For a custom shape, extend `Shape` and implement `shape()`, drawing centered at `(0, 0)`.
+
+#### Orbit
+Moves shapes in a circle around a point or another shape. Orbit children are updated and drawn by the orbit, so don't also add them to the manager.
+
+``` js
+const sun = m.add(new Ellipse(m, { pos: m.center, size: 30 }));
+const orbit = m.add(new Orbit(m, { center: sun, radius: 60 }));
+orbit.add(new Ellipse(m, { pos: { x: 0, y: 0 }, size: 10 }), { angle: 0, speed: 0.03 });
+```
+
+#### Other exports
+`Line`, `Flowfield`, `CanvasObject` (base class), `createColor`, `linearGradient`, `radialGradient`, `randomPosition`, `canvasObserver`.
 
 ### Multi-step form
 
