@@ -11,7 +11,7 @@ const intAttr = (elem, name, fallback) => {
  * Limits how many times an element (usually a button) can be used, remembered across page loads.
  *
  * Configured with data attributes on the element:
- *   data-limit-id     storage name, unique per limited action (required)
+ *   data-limit-id     storage name, unique per limited action (required); saved as limiter_<id>
  *   data-limit-count  uses allowed before locking (default 1)
  *   data-limit-min / data-limit-hr / data-limit-day
  *                     lock length; they add up, e.g. hr=1 min=30 is 90 minutes
@@ -26,8 +26,7 @@ class Limiter {
     this.target = elem;
     this.status = status;
     this.id = elem.getAttribute('data-limit-id');
-    // Stored under the original key prefix so limits saved by older versions keep working
-    this.key = `agile_${this.id}`;
+    this.key = `limiter_${this.id}`;
     this.countLimit = intAttr(elem, 'data-limit-count', 1);
     this.duration = intAttr(elem, 'data-limit-min', 0) * MS.MINUTE
       + intAttr(elem, 'data-limit-hr', 0) * MS.HOUR
@@ -76,7 +75,6 @@ class Limiter {
   }
 
   // Restores a saved count, ignoring it if its time has already run out.
-  // Older versions also saved a `disabled` flag; it's implied by count, so it's not needed.
   load() {
     if (!this.persist) return;
     try {
