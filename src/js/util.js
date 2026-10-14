@@ -7,10 +7,18 @@ const withOk = res => res.json().then(data => {
   return data;
 });
 
-const get = (url, cstmSettings={}) => {
-  const headers = { 'Content-Type': contentType };
-  const settings = { mode: 'no-cors', ...cstmSettings };
-  return fetch(url, new Headers(headers), settings).then(withOk).catch(err => console.log(err));
+/**
+ * GET a JSON endpoint. `settings` are fetch() options; `settings.headers` (plain object) are merged in.
+ * Resolves to the parsed JSON with `ok` added, or `{ ok: false, error }` on network or parse failure.
+ */
+const get = (url, settings={}) => {
+  return fetch(url, {
+    ...settings,
+    headers: new Headers({ Accept: 'application/json', ...settings.headers })
+  }).then(withOk).catch(error => {
+    console.log(error);
+    return { ok: false, error };
+  });
 }
 
 const post = (url, body, headers={}, settings={}) => {
