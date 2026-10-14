@@ -1,102 +1,125 @@
 import { storageAvailable } from './util.js';
 
-const plural = (n, unit) => `${n} ${unit}${n > 1 ? 's' : ''}`;
+const MINUTE = 60 * 1000;
+const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
 
+// Reads a whole-number data attribute; missing or invalid values fall back to `fallback`.
+const intAttr = (elem, name, fallback) => {
+  const value = parseInt(elem.getAttribute(name), 10);
+  return Number.isNaN(value) ? fallback : value;
+}
+
+/**
+ * Limits how many times an element (usually a button) can be used, remembered across page loads.
+ *
+ * Configured with data attributes on the element:
+ *   data-limit-id     storage name, unique per limited action (required)
+ *   data-limit-count  uses allowed before locking (default 1)
+ *   data-limit-min / data-limit-hr / data-limit-day
+ *                     lock length; they add up, e.g. hr=1 min=30 is 90 minutes
+ *
+ * Every use restarts the timer, so the element unlocks once that much time passes with no use.
+ * When locked, the element is disabled and `status` (optional) shows how long is left. It
+ * unlocks by itself when the time is up, even if the page stays open.
+ * Falls back to an in-memory count if localStorage is blocked (some private browsing modes).
+ */
 class Limiter {
-  constructor(elem, status) {
+  constructor(elem, status=null) {
     this.target = elem;
     this.status = status;
-    this.disabled = false;
-    this.now = new Date();
-    this.expiration = false;
     this.id = elem.getAttribute('data-limit-id');
-    this.min = parseInt(elem.getAttribute('data-limit-min'));
-    this.hr = parseInt(elem.getAttribute('data-limit-hr'));
-    this.day = parseInt(elem.getAttribute('data-limit-day'));
-    this.countLimit = parseInt(elem.getAttribute('data-limit-count'));
+    // Stored under the original key prefix so limits saved by older versions keep working
+    this.key = `agile_${this.id}`;
+    this.countLimit = intAttr(elem, 'data-limit-count', 1);
+    const minutes = intAttr(elem, 'data-limit-min', 0)
+      + intAttr(elem, 'data-limit-hr', 0) * 60
+      + intAttr(elem, 'data-limit-day', 0) * 60 * 24;
+    this.duration = minutes * MINUTE;
+    this.persist = storageAvailable();
+    this.count = 0;
+    this.expiration = null;
+    this.timer = null;
 
-    this.init();
+    this.load();
+    if (this.locked) this.lock();
   }
 
-  get key() {
-    return `agile_${this.id}`;
+  get locked() {
+    return this.count >= this.countLimit && this.expiration > Date.now();
   }
 
-  init() {
-    if (!storageAvailable()) return;
-
-    const jsonData = localStorage.getItem(this.key);
-    if (jsonData) {
-      this.dataExists(JSON.parse(jsonData));
-    } else {
-      this.resetLimit();
-    }
-    if (this.now > this.expiration) this.resetLimit();
-    if (this.disabled) {
-      this.currentlyDisabled();
-      return false;
-    }
-    if (this.count >= this.countLimit) {
-      this.disableTarget();
-      this.currentlyDisabled();
-      return false;
-    }
-    this.save();
+  get remaining() {
+    return Math.max(0, this.countLimit - this.count);
   }
 
+  /**
+   * Records one use. Locks the element when the limit is reached.
+   * @returns uses left, or false if it was already locked
+   */
   add() {
+    if (this.locked) return false;
     this.count++;
-    console.log(`You can try ${this.id.replace('_', ' ')} ${this.countLimit - this.count} more times.`);
-    this.setExpiration();
+    this.expiration = new Date(Date.now() + this.duration);
     this.save();
+    if (this.locked) this.lock();
+    return this.remaining;
   }
 
-  dataExists(data) {
-    this.count = data.count;
-    this.disabled = data.disabled;
-    this.expiration = data.expiration ? new Date(data.expiration) : false;
+  /**
+   * Clears the count and unlocks immediately.
+   */
+  resetLimit() {
+    clearTimeout(this.timer);
+    this.count = 0;
+    this.expiration = null;
+    this.target.disabled = false;
+    if (this.status) this.status.innerHTML = '';
+    if (this.persist) localStorage.removeItem(this.key);
+  }
+
+  // Restores a saved count, ignoring it if its time has already run out.
+  // Older versions also saved a `disabled` flag; it's implied by count, so it's not needed.
+  load() {
+    if (!this.persist) return;
+    try {
+      const data = JSON.parse(localStorage.getItem(this.key));
+      const expiration = data?.expiration ? new Date(data.expiration) : null;
+      if (expiration > Date.now()) {
+        this.count = data.count;
+        this.expiration = expiration;
+      } else {
+        localStorage.removeItem(this.key);
+      }
+    } catch {
+      localStorage.removeItem(this.key);
+    }
   }
 
   save() {
-    localStorage.setItem(this.key, JSON.stringify({
-      count: this.count,
-      disabled: this.disabled,
-      expiration: this.expiration
-    }));
+    if (!this.persist) return;
+    localStorage.setItem(this.key, JSON.stringify({ count: this.count, expiration: this.expiration }));
   }
 
-  setExpiration() {
-    this.expiration = new Date();
-    if (this.min > 0) this.expiration.setMinutes(this.now.getMinutes() + this.min);
-    if (this.hr > 0) this.expiration.setHours(this.now.getHours() + this.hr);
-    if (this.day > 0) this.expiration.setHours(this.now.getHours() + (this.day * 24));
-  }
-
-  disableTarget() {
+  // Disables the element, shows the wait time, and schedules the unlock. setTimeout can't wait
+  // longer than ~24.8 days, so longer locks re-check when that timer fires.
+  lock() {
     this.target.disabled = true;
-    this.disabled = true;
+    if (this.status) this.status.innerHTML = `Limit of uses reached. Try again in ${this.timeLeft()}.`;
+    clearTimeout(this.timer);
+    const wait = Math.min(this.expiration - Date.now(), 2 ** 31 - 1);
+    this.timer = setTimeout(() => this.locked ? this.lock() : this.resetLimit(), wait);
   }
 
-  resetLimit() {
-    this.count = 0;
-    this.disabled = false;
-    this.target.disabled = false;
-    this.expiration = false;
+  // e.g. "1 day, 2 hours and 5 minutes". Rounds up, so it never claims 0 minutes while locked.
+  timeLeft() {
+    const total = Math.ceil((this.expiration - Date.now()) / MINUTE);
+    const parts = [
+      [Math.floor(total / 1440), 'day'],
+      [Math.floor((total % 1440) / 60), 'hour'],
+      [total % 60, 'minute']
+    ].filter(([n]) => n > 0).map(([n, unit]) => plural(n, unit));
+    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
   }
-
-  currentlyDisabled() {
-    const totalMin = Math.floor((this.expiration - this.now) / 60000);
-    const day = Math.floor(totalMin / 1440);
-    const hr = Math.floor((totalMin % 1440) / 60);
-    const min = totalMin % 60;
-    const dayTemp = day > 0 ? `${plural(day, 'day')}${hr > 0 ? ',' : ''}` : '';
-    const hrTemp = hr > 0 ? plural(hr, 'hour') : '';
-    const minTemp = min > 0 ? `${hr > 0 || day > 0 ? ' and' : ''} ${plural(min, 'minute')}` : '';
-    this.target.disabled = true;
-    this.status.innerHTML = `Limit of uses reached. Try again in ${dayTemp} ${hrTemp} ${minTemp}.`;
-  }
-
-  storageAvailable = storageAvailable;
 }
 
 export { Limiter }
