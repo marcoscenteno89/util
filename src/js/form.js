@@ -11,7 +11,6 @@ class Form {
     this.tabList = [];
     this.values = {}
     this.currentTab = 0;
-    this.previousTab;
     this.controller = form.querySelector('.controller');
     this.next = form.querySelector('button[name="next"]');
     this.previous = form.querySelector('button[name="prev"]');
@@ -21,52 +20,38 @@ class Form {
     this.init();
   }
   init() {
-    let tabListNode = this.form.querySelectorAll(".tab");
-    let dot = '<span class="dot" >.</span>';
+    const tabListNode = this.form.querySelectorAll(".tab");
+    const dot = '<span class="dot" >.</span>';
+    const changeTab = (event) => this.changeTab(event);
     this.next.setAttribute('data-text', this.next.innerHTML);
-    tabListNode.forEach( (tab, i) => {
+    tabListNode.forEach((tab, i) => {
       let step = false;
-      let name = tab.getAttribute('data-name');
+      const name = tab.getAttribute('data-name');
       tab.id = `id-${name.toLowerCase().replace(' ', '-')}`;
 
       if (this.stepContainer) {
-        let width = `style="flex: 0 1 ${100 / tabListNode.length}%;"`;
-        let step = tabListNode.length > 1 ? `<span class="number">${(i + 1)}</span>${dot}` : '';
+        const width = `style="flex: 0 1 ${100 / tabListNode.length}%;"`;
+        const number = tabListNode.length > 1 ? `<span class="number">${i + 1}</span>${dot}` : '';
         this.stepContainer.insertAdjacentHTML("beforeend", `
           <div ${width} class="step step-${i} flex-col" data-step="${i}">
-            ${step}
+            ${number}
             <span class="title">${name.toUpperCase()}</span>
           </div>
         `);
-        step = this.stepContainer.querySelector(`.step-${i}`);
+        step = this.stepContainer.lastElementChild;
+        step.addEventListener('click', changeTab);
       }
 
-      this.tabList.push({
-        valid: true,
-        index: i,
-        name: name,
-        tab: tab,
-        step: step,
-        values: {}
-      });
+      this.tabList.push({ valid: true, index: i, name, tab, step, values: {} });
     });
 
-    
-    for (let i of this.controller.children) {
-      i.style.width = `${100 / this.controller.children.length}%`;
+    for (const btn of this.controller.children) {
+      btn.style.width = `${100 / this.controller.children.length}%`;
     }
 
-    // SETUP EVENT LISTENERS
-    this.form.querySelectorAll('.step').forEach((step, i) => {
-      this.tabList[i].step = step;
-      step.addEventListener('click', (event) => this.changeTab(event));
-    });
-    
-    this.next.addEventListener('click', (event) => this.changeTab(event));
-    if (this.previous) {
-      this.previous.addEventListener('click', (event) => this.changeTab(event));
-    }
-    this.showNewTab(this.currentTab);
+    this.next.addEventListener('click', changeTab);
+    this.previous?.addEventListener('click', changeTab);
+    this.showNewTab();
   }
 
   formAction() {
@@ -76,72 +61,65 @@ class Form {
   }
   
   validateData() {
-    let fieldList = this.tabList[this.currentTab].tab.querySelectorAll('.form-input');
-    this.tabList[this.currentTab].valid = true; // RESET TAB VALIDITY
+    const current = this.tabList[this.currentTab];
+    const fieldList = current.tab.querySelectorAll('.form-input');
+    current.valid = true; // RESET TAB VALIDITY
     this.status.innerHTML = '';
     let msg = '';
-    let issues = 0;
     fieldList.forEach(field => {
-      if (field.type !== 'hidden') {
-        if (field.validity.valid) {
-          field.classList.add('success');
-        } else {
-          issues++;
-          field.classList.add('warning');
-          msg += `<div>${field.getAttribute('placeholder')}: ${field.validationMessage}</div>`;
-        }
+      if (field.type === 'hidden') return;
+      if (field.validity.valid) {
+        field.classList.add('success');
+      } else {
+        field.classList.add('warning');
+        msg += `<div>${field.getAttribute('placeholder')}: ${field.validationMessage}</div>`;
       }
     });
 
-    if (issues > 0) {
-      this.tabList[this.currentTab].valid = false;
-      if (this.tabList[this.currentTab].step) {
-        this.tabList[this.currentTab].step.classList.add('error');
-      }
+    if (msg) {
+      current.valid = false;
+      current.step?.classList.add('error');
       this.status.innerHTML = `<div class="alert alert-danger">${msg}</div>`;
       return false;
     }
 
     fieldList.forEach(field => {
       this.values[field.name] = field.value;
-      this.tabList[this.currentTab].values[field.name] = field.value;
+      current.values[field.name] = field.value;
     });
   }
 
   showNewTab() {
-    this.tabList[this.currentTab].tab.style.display = "flex";
-    this.next.setAttribute("data-step", this.currentTab + 1); 
-  
+    const current = this.tabList[this.currentTab];
+    current.tab.style.display = "flex";
+    this.next.setAttribute("data-step", this.currentTab + 1);
+
     if (this.previous) {
-      this.previous.disabled = (this.currentTab === 0) ? true : false;
+      this.previous.disabled = this.currentTab === 0;
       this.previous.setAttribute("data-step", this.currentTab - 1);
     }
 
     if (this.tabList.length > 1) {
-      let last = this.tabList.length - 1;
-      let next = this.next;
-      next.innerHTML = this.currentTab === last ? 'Submit' : next.getAttribute('data-text');
+      const isLast = this.currentTab === this.tabList.length - 1;
+      this.next.innerHTML = isLast ? 'Submit' : this.next.getAttribute('data-text');
     }
-    
-    if (this.tabList[this.currentTab].step) {
-        this.tabList[this.currentTab].step.classList.add('active');
-    }
+
+    current.step?.classList.add('active');
   }
 
   clearPreviousTab() {
-    if (this.tabList[this.previousTab]) {
-      if (this.tabList[this.previousTab].step) {
-        this.tabList[this.previousTab].step.classList.remove('error');
-        this.tabList[this.previousTab].step.classList.remove('active');
-        this.tabList[this.previousTab].step.classList.add('completed');
-      }
-      this.tabList[this.previousTab].tab.style.display = 'none';
+    const prev = this.tabList[this.previousTab];
+    if (!prev) return;
+    if (prev.step) {
+      prev.step.classList.remove('error', 'active');
+      prev.step.classList.add('completed');
     }
+    prev.tab.style.display = 'none';
   }
 
   async changeTab(event) {
-    this.loader.on()
-    let nextStep = parseInt(event.target.getAttribute('data-step'));
+    this.loader.on();
+    const nextStep = parseInt(event.target.getAttribute('data-step'));
     if (this.currentTab < nextStep) this.validateData();
 
     if (!this.tabList[this.currentTab].valid) {

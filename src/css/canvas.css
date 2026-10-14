@@ -10,13 +10,12 @@ canvas {
   height: 500px;
 }
 .canvas-container canvas {
-  -webkit-filter: url(#filter);
   filter: url(#filter);
 }
 .blur-svg {
-    display: none;
+  display: none;
 }
-#framerate { 
+#framerate {
   width: 50px;
   padding: 10px;
   background: #fff;

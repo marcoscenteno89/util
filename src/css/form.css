@@ -32,9 +32,9 @@
   border-bottom: 3px solid #FFF;
 }
 .flex-center {
-	display: flex !important;
-	justify-content: center;
-	align-items: center;
+  display: flex !important;
+  justify-content: center;
+  align-items: center;
 }
 .generic {
   color: var(--dark);
@@ -52,12 +52,12 @@
 }
 .warning {
   color: var(--warning) !important;
-  background-color: var(---warning-low) !important;
+  background-color: var(--warning-low) !important;
   border: 1px solid var(--warning) !important;
 }
 .success {
   color: var(--success) !important;
-  border: 1px solid var(---success) !important;
+  border: 1px solid var(--success) !important;
   background-color: var(--success-low) !important;
 }
 
@@ -85,28 +85,17 @@
   justify-content: center;
   align-items: center;
 }
-.step-form :is(
-    input:not(
-      [type="checkbox"], 
-      [type="radio"]
-    ), 
-    input[type="text"], 
-    input[type="email"], 
-    input[type="password"], 
-    input[type="tel"], 
-    select, 
-    textarea
-  ) {
+.step-form :is(input:not([type="checkbox"], [type="radio"]), select, textarea) {
   padding: var(--padding);
   margin-bottom: 4px;
   border-radius: var(--border-radius);
   border: solid 1px var(--dark);
 }
-.step-form .tab {   
+.step-form .tab {
   display: none;
   flex-direction: column;
 }
-.step-form :is(.step.error) {
+.step-form .step.error {
   background-color: var(--error) !important;
 }
 .step-form .step.error:after {
@@ -156,7 +145,7 @@
 .step-form .steps .step:is(.active, .active.completed, :hover) {
   background-color: var(--primary);
 }
-.step-form .steps .step:is(.completed), .btn.completed {
+.step-form .steps .step.completed, .btn.completed {
   background-color: var(--primary-low);
 }
 .step-form .steps .step:is(.active, .completed),
@@ -168,15 +157,11 @@
 .step-form .steps .step.active:before {
   left: 100%;
   margin-left: 0;
+  border-left: 0.8rem solid var(--primary);
 }
 .step-form .steps .step.active:after {
   right: 100%;
   margin-right: 0;
-}
-.step-form .steps .step.active:before  {
-  border-left: 0.8rem solid var(--primary);
-}
-.step-form .steps .step.active:after {
   border-right: 0.8rem solid var(--primary);
 }
 .step-form .controller {

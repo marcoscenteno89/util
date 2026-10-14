@@ -1,54 +1,56 @@
+import { storageAvailable } from './util.js';
 
-// TO-DO Break this class into limiter class and storage class
+const plural = (n, unit) => `${n} ${unit}${n > 1 ? 's' : ''}`;
+
 class Limiter {
   constructor(elem, status) {
     this.target = elem;
+    this.status = status;
     this.disabled = false;
-    // this.on = true; // SET THIS TO FALSE IF YOU WANT TO TURN OFF LIMITER
     this.now = new Date();
     this.expiration = false;
     this.id = elem.getAttribute('data-limit-id');
     this.min = parseInt(elem.getAttribute('data-limit-min'));
     this.hr = parseInt(elem.getAttribute('data-limit-hr'));
     this.day = parseInt(elem.getAttribute('data-limit-day'));
-    this.count;
     this.countLimit = parseInt(elem.getAttribute('data-limit-count'));
-    this.status = status;
 
     this.init();
   }
 
+  get key() {
+    return `agile_${this.id}`;
+  }
+
   init() {
-    if (this.storageAvailable()) {
-      let jsonData = localStorage.getItem(`agile_${this.target.getAttribute('data-limit-id')}`);
-      if (jsonData) { // USE EXISTING DATA 
-        this.dataExists(JSON.parse(jsonData));
-      } else { // NO DATA AVAILABLE, CREATE NEW ENTRY
-        this.resetLimit();
-      }
-      if (this.now > this.expiration) {
-        this.resetLimit();
-      }
-      if (this.disabled) {
-          this.currentlyDisabled();
-          return false;
-      }
-      if (this.count >= this.countLimit) {
-        this.disableTarget();
-        this.currentlyDisabled();
-        return false;
-      }
-      this.save();
+    if (!storageAvailable()) return;
+
+    const jsonData = localStorage.getItem(this.key);
+    if (jsonData) {
+      this.dataExists(JSON.parse(jsonData));
+    } else {
+      this.resetLimit();
     }
+    if (this.now > this.expiration) this.resetLimit();
+    if (this.disabled) {
+      this.currentlyDisabled();
+      return false;
+    }
+    if (this.count >= this.countLimit) {
+      this.disableTarget();
+      this.currentlyDisabled();
+      return false;
+    }
+    this.save();
   }
 
   add() {
-    this.count = this.count + 1;
-    let label = this.id.replace('_', ' ');
-    console.log(`You can try ${label} ${this.countLimit - this.count} more times.`);
+    this.count++;
+    console.log(`You can try ${this.id.replace('_', ' ')} ${this.countLimit - this.count} more times.`);
     this.setExpiration();
     this.save();
   }
+
   dataExists(data) {
     this.count = data.count;
     this.disabled = data.disabled;
@@ -56,7 +58,7 @@ class Limiter {
   }
 
   save() {
-    localStorage.setItem(`agile_${this.id}`, JSON.stringify({
+    localStorage.setItem(this.key, JSON.stringify({
       count: this.count,
       disabled: this.disabled,
       expiration: this.expiration
@@ -65,13 +67,14 @@ class Limiter {
 
   setExpiration() {
     this.expiration = new Date();
-    if (this.min > 0) this.expiration.setMinutes( this.now.getMinutes() + this.min );
-    if (this.hr > 0) this.expiration.setHours( this.now.getHours() + this.hr);
-    if (this.day > 0) this.expiration.setHours( this.now.getHours() + (this.day * 24));
+    if (this.min > 0) this.expiration.setMinutes(this.now.getMinutes() + this.min);
+    if (this.hr > 0) this.expiration.setHours(this.now.getHours() + this.hr);
+    if (this.day > 0) this.expiration.setHours(this.now.getHours() + (this.day * 24));
   }
+
   disableTarget() {
     this.target.disabled = true;
-    this.disabled = true
+    this.disabled = true;
   }
 
   resetLimit() {
@@ -82,35 +85,18 @@ class Limiter {
   }
 
   currentlyDisabled() {
-    let totalMin = Math.floor(((this.expiration - this.now) / 1000) / 60);
-    let day = Math.floor(totalMin / 1440);
-    let dayRemainder = totalMin % 1440;
-    let hr = Math.floor(dayRemainder / 60);
-    let hrRemainder = dayRemainder % 60;
-    let min = hrRemainder % 60;
-    let dayTemp = day > 0 ? `${day} day${day > 1 ? 's' : ''}${hr > 0 ? ',' : ''}` : '';
-    let hrTemp = hr > 0 ? `${hr} hour${hr > 1 ? 's' : ''}` : '';
-    let minTemp = '';
-    if (min > 0) {
-      minTemp = `${hr > 0 || day > 0 ? ' and' : ''} ${min} minute${min > 1 ? 's' : ''}`;
-    } else {
-      minTemp = '';
-    }
+    const totalMin = Math.floor((this.expiration - this.now) / 60000);
+    const day = Math.floor(totalMin / 1440);
+    const hr = Math.floor((totalMin % 1440) / 60);
+    const min = totalMin % 60;
+    const dayTemp = day > 0 ? `${plural(day, 'day')}${hr > 0 ? ',' : ''}` : '';
+    const hrTemp = hr > 0 ? plural(hr, 'hour') : '';
+    const minTemp = min > 0 ? `${hr > 0 || day > 0 ? ' and' : ''} ${plural(min, 'minute')}` : '';
     this.target.disabled = true;
     this.status.innerHTML = `Limit of uses reached. Try again in ${dayTemp} ${hrTemp} ${minTemp}.`;
   }
 
-  storageAvailable = () => {
-    try {
-      const testKey = 'test';
-      localStorage.setItem(testKey, testKey);
-      localStorage.removeItem(testKey);
-      return true;
-    } catch(e) {
-      console.log('localStorage not available');
-      return false;
-    }
-  }
+  storageAvailable = storageAvailable;
 }
 
 export { Limiter }
