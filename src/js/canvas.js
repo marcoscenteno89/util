@@ -1,14 +1,22 @@
 /**
  * Canvas utilities for p5.js 1.x in instance mode.
+ *
+ * Units: positions and sizes are px; velocities are px per frame at 60 fps. The scene scales
+ * every update by the real frame time, so motion looks the same at 30, 60 or 120 Hz.
  * Angles are always radians, regardless of p.angleMode().
  */
 
+// p5.Color.levels holds RGBA as 0-255; CSS rgba() wants alpha as 0-1.
 const toRgba = c => `rgba(${c.levels[0]}, ${c.levels[1]}, ${c.levels[2]}, ${c.levels[3] / 255})`;
 const toHex = (r, g, b) => `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+
+// Accepts a number (square/uniform) or anything with x/y, and always returns a new p5.Vector,
+// so shapes never share a vector with the caller.
 const toVector = (p, v) => typeof v === 'number' ? p.createVector(v, v) : p.createVector(v.x, v.y);
 
 /**
- * Runs the p5 draw loop only while `node` is in the viewport. Returns the observer.
+ * Pauses the p5 draw loop while `node` is scrolled out of view, so off-screen canvases cost no CPU.
+ * Returns the IntersectionObserver so callers can disconnect it.
  */
 const canvasObserver = (p, node) => {
   const observer = new IntersectionObserver(entries => {
@@ -19,9 +27,12 @@ const canvasObserver = (p, node) => {
 }
 
 /**
- * Builds a style `{ fill: p5.Color[], stroke: p5.Color|null, weight }`.
- * `fill` is one color or an array of colors; several render as a radial gradient.
- * Each fill color gets a `hex` property.
+ * Builds the style object shapes use: `{ fill: p5.Color[], stroke: p5.Color|null, weight }`.
+ * One fill color draws solid; two or more draw a radial gradient from center to edge.
+ * Each fill color also gets a `hex` string for use outside p5 (CSS, logging).
+ * @param fill - one color or an array of colors, in any format p.color() accepts
+ * @param [o.stroke] - outline color, or null for no outline
+ * @param [o.weight=1] - outline width in px
  */
 const createColor = (p, fill=[], { stroke=null, weight=1 } = {}) => ({
   fill: [].concat(fill).map(c => {
@@ -33,6 +44,7 @@ const createColor = (p, fill=[], { stroke=null, weight=1 } = {}) => ({
   weight
 });
 
+// Spreads colors evenly from offset 0 to 1; a single color sits at 0 and fills the whole gradient.
 const addStops = (gradient, colors) => {
   colors.forEach((c, i) => {
     gradient.addColorStop(colors.length > 1 ? i / (colors.length - 1) : 0, toRgba(c));
@@ -40,42 +52,59 @@ const addStops = (gradient, colors) => {
   return gradient;
 }
 
+/**
+ * Canvas linear gradient between two points, usable as `scene.background` or any fillStyle.
+ * @param colors - p5.Color[]
+ */
 const linearGradient = (ctx, start, end, colors) => {
   return addStops(ctx.createLinearGradient(start.x, start.y, end.x, end.y), colors);
 }
 
 /**
- * @param inner - inner radius as a fraction of `radius`; the first color fills it solid
+ * Canvas radial gradient centered on `pos`.
+ * @param colors - p5.Color[], from the inner circle outward
+ * @param [inner=0.5] - inner radius as a fraction of `radius`; the first color fills it solid
  */
 const radialGradient = (ctx, pos, radius, colors, inner=0.5) => {
   return addStops(ctx.createRadialGradient(pos.x, pos.y, radius * inner, pos.x, pos.y, radius), colors);
 }
 
 /**
- * Random position inside the canvas, at least `margin` px from the edges.
+ * Random point inside the canvas, at least `margin` px from every edge.
+ * Pass a shape's radius as the margin to spawn it fully on screen.
  */
-const randomPosition = (manager, margin=0) => {
-  const { p } = manager;
+const randomPosition = (scene, margin=0) => {
+  const { p } = scene;
   return p.createVector(p.random(margin, p.width - margin), p.random(margin, p.height - margin));
 }
 
-class CanvasManager {
+/**
+ * Owns the canvas and the list of objects in it, and runs one simulation step per frame.
+ * Typical use: build objects in p.setup, call scene.run() in p.draw.
+ */
+class Scene {
   /**
    * @param p - p5 instance
-   * @param elem - container element the canvas fills (if a <canvas> is passed, its parent is used)
-   * @param [o.background] - color, CanvasGradient, or null to leave trails
-   * @param [o.collisions=false] - resolve collisions between objects on every update()
-   * @param [o.autoResize=true] - follow the container's size
-   * @param [o.pauseOffscreen=true] - stop the draw loop while the canvas is off screen
+   * @param elem - element the canvas fills; if a <canvas> is passed, its parent is used
+   * @param [o.background] - color, CanvasGradient, or null to skip clearing (leaves trails)
+   * @param [o.gravity] - {x, y} acceleration applied to every moving shape, e.g. { x: 0, y: 0.2 }
+   * @param [o.collisions=false] - resolve shape-to-shape collisions on every update()
+   * @param [o.timeScale=1] - simulation speed; 0.5 is slow motion, 2 is double speed
+   * @param [o.autoResize=true] - resize the canvas (and flowfield) when the container resizes
+   * @param [o.pauseOffscreen=true] - stop the draw loop while the canvas is out of view
    */
-  constructor(p, elem, { background=null, collisions=false, autoResize=true, pauseOffscreen=true } = {}) {
+  constructor(p, elem, {
+    background=null, gravity=null, collisions=false, timeScale=1, autoResize=true, pauseOffscreen=true
+  } = {}) {
     this.p = p;
     this.container = elem.tagName === 'CANVAS' ? elem.parentElement : elem;
     this.canvas = p.createCanvas(this.container.clientWidth, this.container.clientHeight);
     this.canvas.parent(this.container);
     this.ctx = this.canvas.drawingContext;
     this.background = background;
+    this.gravity = gravity;
     this.collisions = collisions;
+    this.timeScale = timeScale;
     this.objects = [];
     this.flowfield = null;
 
@@ -90,6 +119,17 @@ class CanvasManager {
   get height() { return this.p.height; }
   get center() { return this.p.createVector(this.p.width / 2, this.p.height / 2); }
 
+  /**
+   * Time step for this frame, in 60 fps frames: 1 at 60 fps, 2 at 30 fps, 0.5 at 120 fps.
+   * Capped at 3 so a long pause (background tab, debugger) can't launch shapes through walls.
+   */
+  get dt() {
+    const ms = this.p.deltaTime || 1000 / 60;
+    return Math.min(ms / (1000 / 60), 3) * this.timeScale;
+  }
+
+  // Matches the canvas to the container. Skips zero sizes (hidden container) and no-op resizes,
+  // since resizeCanvas() clears the canvas and the flowfield rebuild allocates a new grid.
   resize() {
     const { clientWidth: w, clientHeight: h } = this.container;
     if (!w || !h || (w === this.p.width && h === this.p.height)) return;
@@ -97,6 +137,9 @@ class CanvasManager {
     this.flowfield?.build();
   }
 
+  /**
+   * Adds objects to the scene. Returns the first one so you can write `const ball = scene.add(new Ellipse(...))`.
+   */
   add(...objects) {
     this.objects.push(...objects);
     return objects[0];
@@ -108,7 +151,7 @@ class CanvasManager {
   }
 
   /**
-   * Creates a flowfield sized to the canvas. See Flowfield for options.
+   * Creates (or replaces) the scene's flowfield, sized to the canvas. See Flowfield for options.
    */
   setFlowfield(options) {
     this.flowfield = new Flowfield(this, options);
@@ -119,6 +162,7 @@ class CanvasManager {
     const { background: bg, ctx, p } = this;
     if (bg === null) return;
     if (bg instanceof CanvasGradient) {
+      // p.background() only takes colors, so paint gradients with the raw canvas API
       ctx.save();
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, p.width, p.height);
@@ -133,13 +177,40 @@ class CanvasManager {
   }
 
   /**
-   * Resolves collisions between every pair of objects that support it.
+   * Resolves collisions between all objects that have a collide() method.
+   *
+   * Uses a uniform grid (spatial hash) so each shape is only tested against shapes in its own and
+   * the 8 neighboring cells, instead of every other shape. Cells are as wide as the largest shape,
+   * so any two touching shapes are always in the same or adjacent cells. One very large shape makes
+   * the cells large too, which falls back toward checking every pair.
    */
   collide() {
-    const list = this.objects.filter(obj => obj.collide);
-    for (let i = 0; i < list.length; i++) {
-      for (let e = i + 1; e < list.length; e++) list[i].collide(list[e]);
-    }
+    const bodies = this.objects.filter(obj => obj.collide);
+    if (bodies.length < 2) return;
+    const cellSize = 2 * Math.max(...bodies.map(b => b.radius)) || 1;
+    const keyOf = (cx, cy) => cx * 100003 + cy;
+
+    const cells = new Map();
+    const coords = bodies.map((body, i) => {
+      const cx = Math.floor(body.pos.x / cellSize);
+      const cy = Math.floor(body.pos.y / cellSize);
+      const key = keyOf(cx, cy);
+      if (cells.has(key)) cells.get(key).push(i);
+      else cells.set(key, [i]);
+      return [cx, cy];
+    });
+
+    // Only pair i with higher indexes (j > i) so each pair is resolved once
+    bodies.forEach((body, i) => {
+      const [cx, cy] = coords[i];
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (const j of cells.get(keyOf(cx + dx, cy + dy)) ?? []) {
+            if (j > i) body.collide(bodies[j]);
+          }
+        }
+      }
+    });
   }
 
   overlaps(obj) {
@@ -147,12 +218,15 @@ class CanvasManager {
   }
 
   /**
-   * Updates the flowfield and every object, removes dead objects, then resolves collisions.
+   * Advances the scene by one frame: flowfield, every object (with gravity), then collisions.
+   * Objects whose life has run out are removed. The loop runs backwards so removing an object
+   * doesn't skip the one after it.
    */
   update() {
-    this.flowfield?.update();
+    const dt = this.dt;
+    this.flowfield?.update(dt);
     for (let i = this.objects.length - 1; i >= 0; i--) {
-      this.objects[i].update();
+      this.objects[i].update(dt, this.gravity);
       if (this.objects[i].dead) this.objects.splice(i, 1);
     }
     if (this.collisions) this.collide();
@@ -165,13 +239,16 @@ class CanvasManager {
   }
 
   /**
-   * One frame: update() then draw(). Call from p.draw.
+   * One full frame: update() then draw(). Call this from p.draw.
    */
   run() {
     this.update();
     this.draw();
   }
 
+  /**
+   * Stops watching the container. Call before removing the sketch to avoid leaking observers.
+   */
   destroy() {
     this.resizeObserver?.disconnect();
     this.intersectionObserver?.disconnect();
@@ -179,21 +256,23 @@ class CanvasManager {
 }
 
 /**
- * Grid of unit vectors driven by Perlin noise.
- * @param [o.cellSize=20] - cell size in px
- * @param [o.step=0.1] - noise step between neighboring cells (lower = smoother)
- * @param [o.speed=0.005] - noise z-offset added per frame (higher = changes faster)
- * @param [o.offset=0] - starting noise z-offset
- * @param [o.visible=false] - draw the field in manager.draw()
+ * A grid of unit-length direction vectors that change smoothly over space and time (Perlin noise).
+ * Use it to steer shapes: shape.applyForce(field.lookup(shape.pos).vel).
+ * @param [o.cellSize=20] - grid cell size in px; smaller is finer but costs more per frame
+ * @param [o.step=0.1] - noise distance between neighboring cells; lower gives smoother, wider swirls
+ * @param [o.speed=0.005] - how fast the field changes over time
+ * @param [o.offset=0] - starting point in noise time; change it to get a different field
+ * @param [o.visible=false] - draw the field as short lines in scene.draw() (handy for tuning)
  */
 class Flowfield {
-  constructor(manager, { cellSize=20, step=0.1, speed=0.005, offset=0, visible=false } = {}) {
-    this.manager = manager;
-    this.p = manager.p;
+  constructor(scene, { cellSize=20, step=0.1, speed=0.005, offset=0, visible=false } = {}) {
+    this.scene = scene;
+    this.p = scene.p;
     Object.assign(this, { cellSize, step, speed, offset, visible });
     this.build();
   }
 
+  // Allocates the grid. Cells are plain { pos, vel } objects; pos is the cell center.
   build() {
     const { p, cellSize } = this;
     const half = cellSize / 2;
@@ -207,7 +286,9 @@ class Flowfield {
     );
   }
 
-  update() {
+  // Reuses each cell's vector instead of allocating new ones, so a large field doesn't create
+  // garbage every frame. Noise (0-1) is mapped to 0-4 full turns so directions vary more.
+  update(dt=1) {
     const { p, step } = this;
     for (let x = 0; x < this.cols; x++) {
       for (let y = 0; y < this.rows; y++) {
@@ -215,11 +296,11 @@ class Flowfield {
         this.field[x][y].vel.set(Math.cos(angle), Math.sin(angle));
       }
     }
-    this.offset += this.speed;
+    this.offset += this.speed * dt;
   }
 
   /**
-   * Cell under `pos`, clamped to the grid.
+   * The cell under `pos`. Positions outside the canvas use the nearest edge cell.
    */
   lookup(pos) {
     const x = Math.min(this.cols - 1, Math.max(0, Math.floor(pos.x / this.cellSize)));
@@ -227,6 +308,8 @@ class Flowfield {
     return this.field[x][y];
   }
 
+  // Draws each direction as a line from the cell center. Computes the end point directly rather
+  // than push/translate/rotate/pop per cell, which is several times faster for large grids.
   draw(color=255) {
     const { p } = this;
     const len = this.cellSize / 2;
@@ -240,15 +323,16 @@ class Flowfield {
 }
 
 /**
- * Base for anything the manager updates and draws.
+ * Base class for anything the scene updates and draws. Subclass it for custom objects:
+ * override update(dt, gravity), draw(), and the `dead` getter if the object should be removed.
  */
 class CanvasObject {
   static #nextId = 1;
 
-  constructor(manager) {
-    this.manager = manager;
-    this.p = manager.p;
-    this.ctx = manager.ctx;
+  constructor(scene) {
+    this.scene = scene;
+    this.p = scene.p;
+    this.ctx = scene.ctx;
     this.id = CanvasObject.#nextId++;
   }
 
@@ -256,6 +340,10 @@ class CanvasObject {
   update() {}
   draw() {}
 
+  /**
+   * Applies a createColor() style to the p5 drawing state.
+   * @param [gradient] - CanvasGradient that replaces the solid fill
+   */
   applyStyle(style, gradient=null) {
     const { p } = this;
     if (style.stroke) {
@@ -265,44 +353,59 @@ class CanvasObject {
       p.noStroke();
     }
     if (!style.fill.length) return p.noFill();
+    // p.fill() turns filling on and sets ctx.fillStyle; p5 then fills with whatever ctx.fillStyle
+    // holds, so overwriting it afterwards swaps the solid color for the gradient.
     p.fill(style.fill[0]);
-    // p5 fills with ctx.fillStyle, so the gradient must be set after p.fill()
     if (gradient) this.ctx.fillStyle = gradient;
   }
 }
 
 /**
- * Base for moving shapes. Subclasses implement `shape()`, drawing centered at (0, 0).
- * @param o.pos - {x, y}
- * @param o.size - number or {x, y} (width, height)
- * @param [o.vel] [o.acc] - {x, y}
- * @param [o.mass] - defaults to size.x
+ * A moving, colliding body. Collisions treat every shape as a circle of `radius`.
+ * Subclasses only implement shape(), drawing centered at (0, 0); position and rotation are
+ * already applied when it is called.
+ *
+ * Per frame: applyForce() any number of times, then update() moves it, then draw().
+ * scene.run() calls update() and draw() for you.
+ *
+ * @param o.pos - {x, y} center
+ * @param o.size - number, or {x, y} for width and height
+ * @param [o.vel] - {x, y} in px per frame
+ * @param [o.acc] - {x, y} starting acceleration (reset to 0 after each update)
+ * @param [o.mass] - defaults to size.x, so bigger shapes are heavier
+ * @param [o.isStatic=false] - never moves; other shapes bounce off it (walls, floors, pegs)
+ * @param [o.bounce=1] - restitution, 0-1: 1 keeps all speed on impact, 0 doesn't bounce at all
+ * @param [o.friction=0] - fraction of velocity lost per frame, 0-1, e.g. 0.02 for air drag
+ * @param [o.maxSpeed=Infinity] - speed cap in px per frame
  * @param [o.color='#fff'] - createColor() style, or any p5 color / array of colors
  * @param [o.angle=0] - rotation in radians
- * @param [o.spin=0] - rotation added per frame
- * @param [o.maxSpeed=Infinity]
- * @param [o.life] - frames until the shape is removed
- * @param [o.shrink=false] - shrink to 0 over its life
+ * @param [o.spin=0] - radians added per frame
+ * @param [o.life] - frames until removed by the scene
+ * @param [o.shrink=false] - scale down to 0 over its life
  * @param [o.fade=false] - fade out over the second half of its life
  */
 class Shape extends CanvasObject {
-  constructor(manager, {
-    pos, size, vel={ x: 0, y: 0 }, acc={ x: 0, y: 0 }, mass, color='#fff',
-    angle=0, spin=0, maxSpeed=Infinity, life=null, shrink=false, fade=false
+  constructor(scene, {
+    pos, size, vel={ x: 0, y: 0 }, acc={ x: 0, y: 0 }, mass, isStatic=false, bounce=1, friction=0,
+    maxSpeed=Infinity, color='#fff', angle=0, spin=0, life=null, shrink=false, fade=false
   }) {
-    super(manager);
+    super(scene);
     const { p } = this;
     this.pos = toVector(p, pos);
     this.size = toVector(p, size);
     this.vel = toVector(p, vel);
     this.acc = toVector(p, acc);
     this.mass = mass ?? this.size.x;
+    this.isStatic = isStatic;
+    this.bounce = bounce;
+    this.friction = friction;
+    this.maxSpeed = maxSpeed;
     this.angle = angle;
     this.spin = spin;
-    this.maxSpeed = maxSpeed;
     this.life = life ? { total: life, remaining: life, shrink, fade } : null;
 
-    // Own copies of the colors so fading one shape never changes another
+    // Copy the colors so fading this shape never changes another shape using the same style.
+    // Arrays have a built-in .fill() method, so check for an array rather than truthiness.
     const style = Array.isArray(color.fill) ? color : createColor(p, color);
     this.color = { ...style, fill: style.fill.map(c => Object.assign(p.color(toRgba(c)), { hex: c.hex })) };
     this.alpha = this.color.fill.map(c => c.levels[3]);
@@ -312,9 +415,17 @@ class Shape extends CanvasObject {
     this.gradientKey = null;
   }
 
+  // Radius of the circle used for collisions and overlaps; covers the longer side.
   get radius() { return Math.max(this.size.x, this.size.y) / 2; }
+
+  // 0 for static shapes, which makes forces and collision impulses unable to move them.
+  get invMass() { return this.isStatic || this.mass === Infinity ? 0 : 1 / this.mass; }
+
   get dead() { return this.life !== null && this.life.remaining <= 0; }
 
+  /**
+   * Restores position, size, velocity, angle, life and opacity to their starting values.
+   */
   reset() {
     this.pos.set(this.original.pos);
     this.size.set(this.original.size);
@@ -326,56 +437,73 @@ class Shape extends CanvasObject {
   }
 
   /**
-   * Adds a force for the next update(). Does not move the shape.
+   * Queues a force for the next update(). Heavier shapes accelerate less (a = F / m).
+   * Does not move the shape by itself, so it can be called many times per frame.
    */
   applyForce(force) {
-    this.acc.add(force.x / this.mass, force.y / this.mass);
+    const inv = this.invMass;
+    this.acc.add(force.x * inv, force.y * inv);
   }
 
   /**
-   * Pulls `other` toward this shape.
+   * Pulls `other` toward this shape with gravity-like force: G * m1 * m2 / (distance² + softening²).
+   * Softening stops the force from exploding when the two are very close.
+   * Only `other` is pulled; call other.attract(this) as well for mutual attraction.
    */
-  attract(other, G=1) {
+  attract(other, G=1, softening=10) {
     const force = this.pos.copy().sub(other.pos);
-    const distanceSq = this.p.constrain(force.magSq(), 100, 1000);
-    force.setMag((G * this.mass * other.mass) / distanceSq);
-    other.applyForce(force);
+    const strength = (G * this.mass * other.mass) / (force.magSq() + softening * softening);
+    other.applyForce(force.setMag(strength));
   }
 
-  update() {
-    this.vel.add(this.acc).limit(this.maxSpeed);
-    this.pos.add(this.vel);
+  /**
+   * Moves the shape one step (semi-implicit Euler: velocity first, then position).
+   * @param [dt=1] - time step in 60 fps frames; the scene passes the real value
+   * @param [gravity] - {x, y} acceleration added this step, independent of mass
+   */
+  update(dt=1, gravity=null) {
+    if (!this.isStatic) {
+      if (gravity) this.acc.add(gravity.x, gravity.y);
+      this.vel.add(this.acc.x * dt, this.acc.y * dt);
+      // Friction is per 60 fps frame, so raise it to the power of dt to match at any frame rate
+      if (this.friction) this.vel.mult(Math.pow(1 - this.friction, dt));
+      this.vel.limit(this.maxSpeed);
+      this.pos.add(this.vel.x * dt, this.vel.y * dt);
+    }
     this.acc.set(0, 0);
-    this.angle += this.spin;
-    if (this.life) this.updateLife();
+    this.angle += this.spin * dt;
+    if (this.life) this.updateLife(dt);
   }
 
-  updateLife() {
+  updateLife(dt=1) {
     const life = this.life;
-    life.remaining = Math.max(0, life.remaining - 1);
+    life.remaining = Math.max(0, life.remaining - dt);
     const ratio = life.remaining / life.total;
     if (life.shrink) this.size.set(this.original.size.x * ratio, this.original.size.y * ratio);
     if (life.fade) {
+      // Stays fully opaque for the first half of its life, then fades linearly to 0
       const fade = Math.min(1, ratio * 2);
       this.color.fill.forEach((c, i) => c.setAlpha(this.alpha[i] * fade));
     }
   }
 
   /**
-   * Keeps the shape inside the canvas, reversing velocity at the edges.
+   * Keeps the shape inside the canvas. Pushes it back inside and points its velocity inward,
+   * scaled by `bounce`. Pointing inward (instead of flipping) avoids getting stuck at the edge.
    */
   bounceEdges() {
+    if (this.isStatic) return;
     const { width, height } = this.p;
     const hx = this.size.x / 2;
     const hy = this.size.y / 2;
-    if (this.pos.x < hx) { this.pos.x = hx; this.vel.x = Math.abs(this.vel.x); }
-    else if (this.pos.x > width - hx) { this.pos.x = width - hx; this.vel.x = -Math.abs(this.vel.x); }
-    if (this.pos.y < hy) { this.pos.y = hy; this.vel.y = Math.abs(this.vel.y); }
-    else if (this.pos.y > height - hy) { this.pos.y = height - hy; this.vel.y = -Math.abs(this.vel.y); }
+    if (this.pos.x < hx) { this.pos.x = hx; this.vel.x = Math.abs(this.vel.x) * this.bounce; }
+    else if (this.pos.x > width - hx) { this.pos.x = width - hx; this.vel.x = -Math.abs(this.vel.x) * this.bounce; }
+    if (this.pos.y < hy) { this.pos.y = hy; this.vel.y = Math.abs(this.vel.y) * this.bounce; }
+    else if (this.pos.y > height - hy) { this.pos.y = height - hy; this.vel.y = -Math.abs(this.vel.y) * this.bounce; }
   }
 
   /**
-   * Moves the shape to the opposite side when it leaves the canvas.
+   * Moves the shape to the opposite edge when it leaves the canvas, like classic Asteroids.
    */
   wrapEdges() {
     const { width, height } = this.p;
@@ -392,32 +520,42 @@ class Shape extends CanvasObject {
   }
 
   /**
-   * Elastic collision treating both shapes as circles. Returns true if they touched.
+   * Resolves a collision with `other`, treating both as circles. Returns true if they touched.
+   *
+   * 1. Separates them along the line between centers. Each moves in proportion to its inverse
+   *    mass, so a light shape moves more than a heavy one and a static shape doesn't move.
+   * 2. If they are moving toward each other, applies an impulse along that line. The impulse
+   *    conserves momentum; `bounce` (the lower of the two) sets how much speed survives.
    */
   collide(other) {
+    const invA = this.invMass;
+    const invB = other.invMass;
+    const invSum = invA + invB;
     const normal = other.pos.copy().sub(this.pos);
     const dist = normal.mag();
     const overlap = this.radius + other.radius - dist;
     if (overlap <= 0) return false;
+    if (invSum === 0) return true;
+    // Exactly on top of each other: there's no direction between them, so pick one
     if (dist === 0) normal.set(1, 0);
     else normal.div(dist);
 
-    // Push apart, heavier shapes move less
-    const total = this.mass + other.mass;
-    this.pos.sub(normal.x * overlap * other.mass / total, normal.y * overlap * other.mass / total);
-    other.pos.add(normal.x * overlap * this.mass / total, normal.y * overlap * this.mass / total);
+    this.pos.sub(normal.x * overlap * invA / invSum, normal.y * overlap * invA / invSum);
+    other.pos.add(normal.x * overlap * invB / invSum, normal.y * overlap * invB / invSum);
 
-    // Exchange momentum along the normal, unless already separating
+    // Closing speed along the normal; zero or negative means they're already moving apart
     const approach = this.vel.dot(normal) - other.vel.dot(normal);
     if (approach > 0) {
-      const impulse = (2 * approach) / total;
-      this.vel.sub(normal.x * impulse * other.mass, normal.y * impulse * other.mass);
-      other.vel.add(normal.x * impulse * this.mass, normal.y * impulse * this.mass);
+      const restitution = Math.min(this.bounce, other.bounce);
+      const impulse = ((1 + restitution) * approach) / invSum;
+      this.vel.sub(normal.x * impulse * invA, normal.y * impulse * invA);
+      other.vel.add(normal.x * impulse * invB, normal.y * impulse * invB);
     }
     return true;
   }
 
-  // Cached; rebuilt only when size or colors change
+  // Builds the radial gradient once and reuses it until the size or colors change (shrink/fade).
+  // It's built around (0, 0) because draw() has already translated to the shape's center.
   getGradient() {
     if (this.color.fill.length < 2) return null;
     const key = `${this.size.x}|${this.color.fill.map(toRgba).join()}`;
@@ -432,6 +570,7 @@ class Shape extends CanvasObject {
     const { p } = this;
     p.push();
     p.translate(this.pos.x, this.pos.y);
+    // ctx.rotate always takes radians; p.rotate would follow the sketch's angleMode
     if (this.angle) this.ctx.rotate(this.angle);
     this.applyStyle(this.color, this.getGradient());
     this.shape();
@@ -449,11 +588,12 @@ class Ellipse extends Shape {
 }
 
 /**
- * @param [o.corner=0] - corner radius
+ * Rectangle. Collides as a circle covering its longer side.
+ * @param [o.corner=0] - corner radius in px
  */
 class Rect extends Shape {
-  constructor(manager, options) {
-    super(manager, options);
+  constructor(scene, options) {
+    super(scene, options);
     this.corner = options.corner ?? 0;
   }
 
@@ -464,7 +604,8 @@ class Rect extends Shape {
 }
 
 /**
- * Triangle inside the size box, pointing along the shape's angle.
+ * Triangle filling the size box, pointing in the direction of its angle (right at angle 0).
+ * Rotating it toward vel.heading() makes it face where it's going.
  */
 class Triangle extends Shape {
   shape() {
@@ -475,12 +616,12 @@ class Triangle extends Shape {
 }
 
 /**
- * Regular polygon inside the size box.
+ * Regular polygon fitted to the size box (stretched if size.x and size.y differ).
  * @param [o.sides=6]
  */
 class Polygon extends Shape {
-  constructor(manager, options) {
-    super(manager, options);
+  constructor(scene, options) {
+    super(scene, options);
     this.sides = options.sides ?? 6;
   }
 
@@ -495,14 +636,16 @@ class Polygon extends Shape {
 }
 
 /**
- * Line segment, e.g. for trails.
+ * A line segment. Mostly used for trails: call add(pos) each frame and the line follows,
+ * with the previous end becoming the new start.
  * @param o.start o.end - {x, y}
- * @param [o.color=255] [o.weight=1]
- * @param [o.speed=1] - length of getDisplacement()
+ * @param [o.color=255] - any p5 color
+ * @param [o.weight=1] - line width in px
+ * @param [o.speed=1] - length of the vector returned by getDisplacement()
  */
 class Line extends CanvasObject {
-  constructor(manager, { start, end, color=255, weight=1, speed=1 }) {
-    super(manager);
+  constructor(scene, { start, end, color=255, weight=1, speed=1 }) {
+    super(scene);
     this.start = toVector(this.p, start);
     this.end = toVector(this.p, end);
     this.color = this.p.color(color);
@@ -510,25 +653,32 @@ class Line extends CanvasObject {
     this.speed = speed;
   }
 
+  /**
+   * Vector pointing from end back toward start, `speed` px long.
+   */
   getDisplacement() {
     return this.start.copy().sub(this.end).setMag(this.speed);
   }
 
   /**
-   * Moves the line forward: the old end becomes the start.
+   * Extends the line forward to `pos`: the old end becomes the start.
    */
   add(pos) {
     this.start.set(this.end);
     this.end.set(pos.x, pos.y);
   }
 
+  /**
+   * The reverse of add(): the old start becomes the end, and `pos` becomes the start.
+   */
   remove(pos) {
     this.end.set(this.start);
     this.start.set(pos.x, pos.y);
   }
 
   /**
-   * Moves the end to the opposite side when it leaves the canvas, without drawing across.
+   * Moves the end to the opposite edge when it leaves the canvas. The start jumps with it,
+   * otherwise the next draw would streak a line across the whole canvas.
    */
   wrapEdges() {
     const { width, height } = this.p;
@@ -548,22 +698,24 @@ class Line extends CanvasObject {
 }
 
 /**
- * Moves child shapes in a circle around a center.
- * Children are updated and drawn by the orbit, so don't also add them to the manager.
- * @param o.center - {x, y} or a Shape to follow
- * @param o.radius
+ * Moves shapes around a center point (or another shape, which they follow as it moves).
+ * Children are updated and drawn by the orbit, so don't also add them to the scene.
+ * Children ignore gravity and collisions; they still spin, shrink and fade.
+ * @param o.center - {x, y} or a Shape
+ * @param o.radius - distance from the center in px
  */
 class Orbit extends CanvasObject {
-  constructor(manager, { center, radius }) {
-    super(manager);
+  constructor(scene, { center, radius }) {
+    super(scene);
     this.center = center;
     this.radius = radius;
     this.children = [];
   }
 
   /**
-   * @param [o.angle=0] - starting position in radians
-   * @param [o.speed=0.01] - radians per frame
+   * Adds a shape to the orbit and moves it into position. Returns the shape.
+   * @param [o.angle=0] - starting position in radians (0 = right of center)
+   * @param [o.speed=0.01] - radians per frame; negative goes counterclockwise
    */
   add(shape, { angle=0, speed=0.01 } = {}) {
     this.children.push({ shape, angle, speed });
@@ -576,15 +728,15 @@ class Orbit extends CanvasObject {
     child.shape.pos.set(c.x + Math.cos(child.angle) * this.radius, c.y + Math.sin(child.angle) * this.radius);
   }
 
-  update() {
+  update(dt=1) {
     for (let i = this.children.length - 1; i >= 0; i--) {
       const child = this.children[i];
-      child.shape.update();
+      child.shape.update(dt);
       if (child.shape.dead) {
         this.children.splice(i, 1);
         continue;
       }
-      child.angle += child.speed;
+      child.angle += child.speed * dt;
       this.place(child);
     }
   }
@@ -595,6 +747,6 @@ class Orbit extends CanvasObject {
 }
 
 export {
-  CanvasManager, Flowfield, CanvasObject, Shape, Ellipse, Rect, Triangle, Polygon, Line, Orbit,
+  Scene, Flowfield, CanvasObject, Shape, Ellipse, Rect, Triangle, Polygon, Line, Orbit,
   createColor, linearGradient, radialGradient, randomPosition, canvasObserver
 }
