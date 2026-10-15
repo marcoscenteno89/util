@@ -9,6 +9,14 @@ Install a specific version from GitHub:
 "@marccent/util": "github:marcoscenteno89/util#semver:^2.0.0"
 ```
 
+## 2.1.0
+
+### Added
+Canvas effects (`@marccent/util/canvas`), drawn straight to a 2D context:
+- `metaballPath(ctx, blobs, width, height, { cell, reach })`: adds the merged "goo" outline of circles to the current path. Replaces an SVG blur + threshold filter at a fraction of the cost.
+- `glowSprite(color, clear, size)`: pre-draws a round glow on a small canvas to stamp with `drawImage`, instead of building a gradient per glow per frame.
+- `randomWanderPath(random)` and `wander(axis, time)`: smooth 0-1 paths from two sine waves per axis. Unlike `p.noise`, their range doesn't change when another sketch calls `noiseDetail()`.
+
 ## 2.0.0
 
 ### Breaking changes

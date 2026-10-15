@@ -746,7 +746,132 @@ class Orbit extends CanvasObject {
   }
 }
 
+/**
+ * Pre-draws a round glow on its own small canvas: `color` solid out to half the radius, then fading to `clear`
+ * at the edge. Stamp it with ctx.drawImage(sprite, x, y, w, h) to draw many glows cheaply: one gradient built
+ * once instead of one per glow per frame. Under ctx.globalCompositeOperation = 'lighter', overlaps add up.
+ * @param color - any CSS color
+ * @param [clear] - the edge color, usually the background's color at alpha 0 so the fade doesn't go grey
+ * @param [size=128] - sprite size in px; it is scaled when drawn, so only needs to look smooth at its largest
+ */
+const glowSprite = (color, clear='rgba(0, 0, 0, 0)', size=128) => {
+  const sprite = document.createElement('canvas');
+  sprite.width = sprite.height = size;
+  const ctx = sprite.getContext('2d');
+  const r = size / 2;
+  const gradient = ctx.createRadialGradient(r, r, r * 0.5, r, r, r);
+  gradient.addColorStop(0, color);
+  gradient.addColorStop(1, clear);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.fill();
+  return sprite;
+}
+
+/**
+ * A random smooth path for wander(): per axis, two sine waves of unrelated frequencies and random phases.
+ * @param [random=Math.random] - a 0-1 random function, e.g. () => p.random() to follow p.randomSeed()
+ */
+const randomWanderPath = (random=Math.random) => {
+  const axis = () => ({
+    f1: 0.6 + random() * 0.4, f2: 1.3 + random() * 0.8,
+    p1: random() * Math.PI * 2, p2: random() * Math.PI * 2
+  });
+  return { x: axis(), y: axis() };
+}
+
+/**
+ * Position along one axis of a randomWanderPath() at `time`, always 0-1: multiply by the canvas width or height.
+ * Slow and organic, never quite repeating, with a fixed range (p.noise's range is shared by every p5 instance,
+ * so a noiseDetail() call in another sketch changes it). One loop takes roughly 2π / 0.8 ≈ 8 time units.
+ */
+const wander = (axis, time) => 0.5 + 0.3 * Math.sin(axis.f1 * time + axis.p1) + 0.2 * Math.sin(axis.f2 * time + axis.p2);
+
+// Grid buffer reused between metaballPath() calls (they run one at a time).
+let metaballGrid = new Float32Array(0);
+
+/**
+ * Adds the merged outline of circles (metaballs, "goo") to ctx's current path; fill it once afterwards, e.g.
+ * with a gradient. Each circle adds (r² / d²)³ to a field sampled on a grid, and the outline is where the sum
+ * reaches 1: a lone circle is its exact outline, and two bridge once their gap is under about a quarter of
+ * their radius. Cells are traced with marching squares; runs of fully inside cells become one rect.
+ * Much cheaper than an SVG blur + threshold filter over the whole canvas, and needs no filter support.
+ * @param blobs - [{ pos: { x, y }, radius }]; Shapes work as they are
+ * @param [o.cell] - grid step in px; smaller is smoother and slower. Defaults to 1/90 of the average side,
+ *   between 4 and 14, so small canvases keep round edges
+ * @param [o.reach=3] - a circle only adds to grid points within this many radii (beyond 3 it adds under 0.1%)
+ */
+const metaballPath = (ctx, blobs, width, height, { cell, reach=3 } = {}) => {
+  const step = cell ?? Math.min(14, Math.max(4, Math.round((width + height) / 2 / 90)));
+  const cols = Math.ceil(width / step) + 1;
+  const rows = Math.ceil(height / step) + 1;
+  if (metaballGrid.length < cols * rows) metaballGrid = new Float32Array(cols * rows);
+  const values = metaballGrid;
+  values.fill(0, 0, cols * rows);
+  for (const blob of blobs) {
+    const r2 = blob.radius * blob.radius;
+    const far = blob.radius * reach;
+    const i0 = Math.max(0, Math.floor((blob.pos.x - far) / step));
+    const i1 = Math.min(cols - 1, Math.ceil((blob.pos.x + far) / step));
+    const j0 = Math.max(0, Math.floor((blob.pos.y - far) / step));
+    const j1 = Math.min(rows - 1, Math.ceil((blob.pos.y + far) / step));
+    for (let j = j0; j <= j1; j++) {
+      const dy = j * step - blob.pos.y;
+      for (let i = i0; i <= i1; i++) {
+        const dx = i * step - blob.pos.x;
+        const ratio = r2 / (dx * dx + dy * dy || 1e-6);
+        values[j * cols + i] += ratio * ratio * ratio;
+      }
+    }
+  }
+  // Where an edge crosses the outline. Interpolates sum^(1/6), which is r / d for a lone circle: nearly
+  // linear across the edge, so the crossing lands where it should.
+  const crossing = (sa, sb) => {
+    const a = Math.sqrt(Math.cbrt(sa));
+    const b = Math.sqrt(Math.cbrt(sb));
+    return (1 - a) / (b - a);
+  };
+  const xs = [ 0, 0, 0, 0, 0, 0, 0, 0 ];
+  const ys = [ 0, 0, 0, 0, 0, 0, 0, 0 ];
+  for (let j = 0; j < rows - 1; j++) {
+    const y = j * step;
+    let run = -1; // first column of the current run of fully inside cells
+    for (let i = 0; i < cols - 1; i++) {
+      const x = i * step;
+      // Corners clockwise: top-left, top-right, bottom-right, bottom-left.
+      const s0 = values[j * cols + i];
+      const s1 = values[j * cols + i + 1];
+      const s2 = values[(j + 1) * cols + i + 1];
+      const s3 = values[(j + 1) * cols + i];
+      if (s0 >= 1 && s1 >= 1 && s2 >= 1 && s3 >= 1) { if (run < 0) run = i; continue; }
+      if (run >= 0) { ctx.rect(run * step, y, (i - run) * step, step); run = -1; }
+      if (s0 < 1 && s1 < 1 && s2 < 1 && s3 < 1) continue;
+      const s = [ s0, s1, s2, s3 ];
+      const cx = [ x, x + step, x + step, x ];
+      const cy = [ y, y, y + step, y + step ];
+      let n = 0;
+      for (let k = 0; k < 4; k++) {
+        const next = (k + 1) & 3;
+        const inside = s[k] >= 1;
+        if (inside) { xs[n] = cx[k]; ys[n] = cy[k]; n++; }
+        if (inside !== (s[next] >= 1)) {
+          const t = crossing(s[k], s[next]);
+          xs[n] = cx[k] + (cx[next] - cx[k]) * t;
+          ys[n] = cy[k] + (cy[next] - cy[k]) * t;
+          n++;
+        }
+      }
+      ctx.moveTo(xs[0], ys[0]);
+      for (let k = 1; k < n; k++) ctx.lineTo(xs[k], ys[k]);
+      ctx.closePath();
+    }
+    if (run >= 0) ctx.rect(run * step, y, (cols - 1 - run) * step, step);
+  }
+}
+
 export {
   Scene, Flowfield, CanvasObject, Shape, Ellipse, Rect, Triangle, Polygon, Line, Orbit,
-  createColor, linearGradient, radialGradient, randomPosition, canvasObserver
+  createColor, linearGradient, radialGradient, randomPosition, canvasObserver,
+  glowSprite, randomWanderPath, wander, metaballPath
 }

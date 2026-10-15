@@ -86,6 +86,32 @@ const orbit = scene.add(new Orbit(scene, { center: sun, radius: 60 }));
 orbit.add(new Ellipse(scene, { pos: { x: 0, y: 0 }, size: 10 }), { angle: 0, speed: 0.03 });
 ```
 
+#### Effects
+Helpers for common looks, each drawn straight to a 2D context (no p5 objects per frame, so they stay cheap with hundreds of items).
+
+``` js
+import { metaballPath, glowSprite, randomWanderPath, wander, linearGradient } from '@marccent/util/canvas';
+
+// Goo: circles that merge where they get close. Fill the outline once, e.g. with a gradient.
+ctx.beginPath();
+metaballPath(ctx, [{ pos: { x: 200, y: 150 }, radius: 60 }, { pos: { x: 290, y: 160 }, radius: 50 }], p.width, p.height);
+ctx.fill();
+
+// Glows: build one sprite per color once, then stamp it scaled. 'lighter' makes overlaps add up.
+const sprite = glowSprite('#1ecbe1', 'rgba(26, 26, 26, 0)');
+ctx.globalCompositeOperation = 'lighter';
+ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+
+// Wander: a smooth, never-repeating path, always 0-1 per axis.
+const path = randomWanderPath();
+let time = 0;
+p.draw = () => {
+  time += 0.002;
+  const x = wander(path.x, time) * p.width;
+  const y = wander(path.y, time) * p.height;
+};
+```
+
 #### Other exports
 `Line`, `Flowfield`, `CanvasObject` (base class), `createColor`, `linearGradient`, `radialGradient`, `randomPosition`, `canvasObserver`.
 
